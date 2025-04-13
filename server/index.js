@@ -32,10 +32,10 @@ const PORT = process.env.PORT || 3001;
 // Создаем HTTP-сервер на основе Express
 const server = http.createServer(app);
 
-// Настройка CORS для разных окружений
+// Настройка CORS
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production'
-    ? ['https://eljur-client.netlify.app', 'https://eljur-app.netlify.app']
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://eljur-client.netlify.app', 'https://eljur-app.netlify.app', 'https://eljur.netlify.app'] 
     : '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
