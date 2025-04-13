@@ -83,6 +83,15 @@ interface MessageListProps {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
 
+// Нормализуем URL для предотвращения двойных слешей
+const normalizeUrl = (baseUrl: string, path: string): string => {
+  // Удаляем завершающий слеш из baseUrl, если он есть
+  const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  // Убеждаемся, что path начинается со слеша
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
+};
+
 const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selectedUserId }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -252,7 +261,7 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
 
   const fetchConversations = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/messages/conversations`, {
+      const response = await fetch(normalizeUrl(API_URL, '/api/messages/conversations'), {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -294,7 +303,7 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
     setSearchLoading(true);
     try {
       const endpoint = currentUser?.role === 'teacher' ? '/api/users/students' : '/api/users/teachers';
-      const response = await fetch(`${API_URL}${endpoint}`, {
+      const response = await fetch(normalizeUrl(API_URL, endpoint), {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -321,7 +330,7 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
   const handleStartConversation = async (userId: number) => {
     try {
       // Отправляем пустое сообщение для создания диалога
-      const response = await fetch(`${API_URL}/api/messages`, {
+      const response = await fetch(normalizeUrl(API_URL, '/api/messages'), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,

@@ -65,6 +65,15 @@ interface MessageDialogProps {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
 
+// Нормализуем URL для предотвращения двойных слешей
+const normalizeUrl = (baseUrl: string, path: string): string => {
+  // Удаляем завершающий слеш из baseUrl, если он есть
+  const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  // Убеждаемся, что path начинается со слеша
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
+};
+
 const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUserId, onBackToList }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -105,7 +114,7 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
     if (!selectedUserId) return;
 
     try {
-      await fetch(`${API_URL}/api/messages/read/${selectedUserId}`, {
+      await fetch(normalizeUrl(API_URL, `/api/messages/read/${selectedUserId}`), {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -125,7 +134,7 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
   const getFullImageUrl = (url?: string) => {
     if (!url) return '';
     if (url.startsWith('blob:') || url.startsWith('http')) return url;
-    return `${API_URL}${url}`;
+    return normalizeUrl(API_URL, url);
   };
 
   const connectSocket = useCallback(() => {
@@ -261,7 +270,7 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
 
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/api/messages/conversation/${selectedUserId}`, {
+      const response = await fetch(normalizeUrl(API_URL, `/api/messages/conversation/${selectedUserId}`), {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -337,7 +346,7 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
       
       // При отправке FormData не указываем Content-Type, 
       // браузер автоматически установит его как multipart/form-data с правильной границей
-      const response = await fetch(`${API_URL}/api/messages`, {
+      const response = await fetch(normalizeUrl(API_URL, '/api/messages'), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -408,7 +417,7 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
       
       console.log(`Отправляю запрос на удаление сообщения ${messageIdToDelete}`);
       
-      const response = await fetch(`${API_URL}/api/messages/${messageIdToDelete}`, {
+      const response = await fetch(normalizeUrl(API_URL, `/api/messages/${messageIdToDelete}`), {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,

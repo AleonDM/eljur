@@ -1,4 +1,4 @@
-import { Box, AppBar, Toolbar, Typography, Button, Drawer, IconButton, List, ListItem, ListItemIcon, ListItemText, ListItemButton, Tooltip, Menu, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
+import { Box, AppBar, Toolbar, Typography, Button, Drawer, IconButton, List, ListItem, ListItemIcon, ListItemText, ListItemButton, Tooltip, Menu, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, Chip, CircularProgress } from '@mui/material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../store';
@@ -13,9 +13,12 @@ import Brightness7Icon from '@mui/icons-material/Brightness7';
 import ColorLensIcon from '@mui/icons-material/ColorLens';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import LogoutIcon from '@mui/icons-material/Logout';
-import { useState } from 'react';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
+import { useEffect, useState } from 'react';
 import { useTheme, DEFAULT_PRIMARY_COLOR } from '../contexts/ThemeContext';
 import { ChromePicker } from 'react-color';
+import { getClassRatings, StudentRating } from '../services/api';
+import { getGradeColor } from '../utils/gradeUtils';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -30,6 +33,43 @@ const Layout = ({ children }: LayoutProps) => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const { mode, toggleTheme, customColor, setCustomColor, resetColor } = useTheme();
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  const [studentRating, setStudentRating] = useState<{ rank: number; total: number; average: number } | null>(null);
+  const [loadingRating, setLoadingRating] = useState(false);
+
+  useEffect(() => {
+    // Загружаем рейтинг только для студентов и только если есть classId
+    if (isAuthenticated && user?.role === 'student' && user?.classId) {
+      const fetchRating = async () => {
+        try {
+          setLoadingRating(true);
+          const ratings = await getClassRatings(user.classId as string);
+          
+          // Найдем рейтинг текущего пользователя
+          if (ratings.length > 0) {
+            // Сортируем по среднему баллу от высшего к низшему
+            const sortedRatings = [...ratings].sort((a, b) => b.averageGrade - a.averageGrade);
+            
+            // Находим индекс текущего пользователя
+            const userIndex = sortedRatings.findIndex(r => r.studentId.toString() === user.id);
+            
+            if (userIndex !== -1) {
+              setStudentRating({
+                rank: userIndex + 1,
+                total: ratings.length,
+                average: sortedRatings[userIndex].averageGrade
+              });
+            }
+          }
+        } catch (error) {
+          console.error('Ошибка при загрузке рейтинга:', error);
+        } finally {
+          setLoadingRating(false);
+        }
+      };
+      
+      fetchRating();
+    }
+  }, [isAuthenticated, user]);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -69,10 +109,43 @@ const Layout = ({ children }: LayoutProps) => {
     }
   };
 
+  // Компонент отображения рейтинга для многократного использования
+  const RatingDisplay = () => {
+    if (user?.role !== 'student' || !studentRating) return null;
+    
+    if (loadingRating) {
+      return <CircularProgress size={20} color="inherit" />;
+    }
+    
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <EmojiEventsIcon sx={{ mr: 0.5, fontSize: '1.2rem' }} />
+        <Typography variant="body2" sx={{ mr: 1 }}>
+          Рейтинг: {studentRating.rank}/{studentRating.total}
+        </Typography>
+        <Chip 
+          label={studentRating.average.toFixed(2)}
+          size="small"
+          sx={{ 
+            color: 'white',
+            bgcolor: getGradeColor(studentRating.average),
+            fontWeight: 'bold',
+            minWidth: 45
+          }}
+        />
+      </Box>
+    );
+  };
+
   const navigationItems = getNavItems();
 
   const drawer = (
     <Box sx={{ width: 250 }} role="presentation" onClick={() => setDrawerOpen(false)}>
+      {user?.role === 'student' && (
+        <Box sx={{ p: 2, borderBottom: '1px solid rgba(0, 0, 0, 0.12)' }}>
+          <RatingDisplay />
+        </Box>
+      )}
       <List>
         {navigationItems.map((item) => (
           <ListItem key={item.path} component="div">
@@ -145,6 +218,12 @@ const Layout = ({ children }: LayoutProps) => {
             
             {isAuthenticated && (
               <>
+                {user?.role === 'student' && (
+                  <Box sx={{ mr: 3, display: { xs: 'none', sm: 'flex' } }}>
+                    <RatingDisplay />
+                  </Box>
+                )}
+
                 <Typography 
                   variant="body1" 
                   sx={{ 

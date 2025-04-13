@@ -5,8 +5,11 @@ import { resetGradeRoundingThresholdCache } from '../utils/gradeUtils';
 // Получаем URL API из переменных окружения или используем localhost для разработки
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
+// Удаляем завершающий слеш в URL, если он есть
+const normalizedApiUrl = API_URL.endsWith('/') ? API_URL.slice(0, -1) : API_URL;
+
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: normalizedApiUrl,
 });
 
 // Добавляем перехватчик для установки токена
