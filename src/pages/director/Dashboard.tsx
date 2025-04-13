@@ -25,17 +25,28 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Container
+  Container,
+  Grid,
+  ToggleButtonGroup,
+  ToggleButton,
+  Snackbar,
+  Slider,
 } from '@mui/material';
-import { Delete as DeleteIcon, Save as SaveIcon } from '@mui/icons-material';
+import { Delete as DeleteIcon, Save as SaveIcon, CalendarMonth, ViewWeek } from '@mui/icons-material';
 import { Schedule, Class, Subject, getSchedule, updateSchedule, getScheduleTemplates, createScheduleTemplate, deleteScheduleTemplate, getSubjects, getSchoolSettings, updateSchoolSettings, getClasses, getUsers } from '../../services/api';
 import type { SchoolSettings, User } from '../../services/api';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { ru as ruLocale } from 'date-fns/locale';
+import { addDays, startOfWeek, format } from 'date-fns';
 
 interface ScheduleState {
   [key: number]: {
     [key: number]: {
       subject: string;
       teacherId?: string;
+      classroom?: string;
     };
   };
 }
@@ -52,10 +63,15 @@ const defaultSettings: SchoolSettings = {
   longBreakDuration: 20,
   longBreakAfterLesson: 3,
   firstLessonStart: '08:00',
-  secondShiftStart: '14:00'
+  secondShiftStart: '14:00',
+  gradeRoundingThreshold: 0.5
 };
 
-const daysOfWeek = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+// Добавим перечисление для режимов просмотра
+enum ViewMode {
+  ByWeek = 'by-week',
+  ByDates = 'by-dates'
+}
 
 const ScheduleTab: React.FC<{ classes: Class[]; settings: SchoolSettings }> = ({ classes, settings }) => {
   const [selectedClass, setSelectedClass] = useState<string>('');
@@ -70,6 +86,14 @@ const ScheduleTab: React.FC<{ classes: Class[]; settings: SchoolSettings }> = ({
     message: '',
     severity: 'success'
   });
+  const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.ByWeek);
+  const [startDate, setStartDate] = useState<Date | null>(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  
+  // Вычисляем даты на неделю
+  const weekDates = React.useMemo(() => {
+    if (!startDate) return [];
+    return Array.from({ length: 6 }, (_, i) => addDays(startDate, i));
+  }, [startDate]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -93,16 +117,32 @@ const ScheduleTab: React.FC<{ classes: Class[]; settings: SchoolSettings }> = ({
       if (!selectedClass) return;
       try {
         setLoading(true);
-        const data = await getSchedule(selectedClass);
+        
+        let data;
+        if (viewMode === ViewMode.ByDates && startDate) {
+          // Если режим просмотра по датам, загружаем для каждого дня отдельно
+          const schedulesPromises = weekDates.map(date => {
+            const formattedDate = format(date, 'yyyy-MM-dd');
+            return getSchedule(selectedClass, formattedDate);
+          });
+          const schedulesByDate = await Promise.all(schedulesPromises);
+          data = schedulesByDate.flat();
+        } else {
+          // Иначе загружаем обычное недельное расписание
+          data = await getSchedule(selectedClass);
+        }
+        
         // Преобразуем массив в объект для удобства работы
         const scheduleObj: ScheduleState = {};
         data.forEach(item => {
-          if (!scheduleObj[item.dayOfWeek - 1]) {
-            scheduleObj[item.dayOfWeek - 1] = {};
+          const dayIndex = item.dayOfWeek - 1;
+          if (!scheduleObj[dayIndex]) {
+            scheduleObj[dayIndex] = {};
           }
-          scheduleObj[item.dayOfWeek - 1][item.lessonNumber - 1] = {
+          scheduleObj[dayIndex][item.lessonNumber - 1] = {
             subject: item.subject,
-            teacherId: item.teacherId?.toString()
+            teacherId: item.teacherId?.toString(),
+            classroom: item.classroom
           };
         });
         setSchedule(scheduleObj);
@@ -119,7 +159,7 @@ const ScheduleTab: React.FC<{ classes: Class[]; settings: SchoolSettings }> = ({
     };
 
     loadSchedule();
-  }, [selectedClass]);
+  }, [selectedClass, viewMode, startDate, weekDates]);
 
   const handleScheduleChange = (dayOfWeek: number, lessonNumber: number, field: string, value: any) => {
     setSchedule(prev => {
@@ -144,7 +184,7 @@ const ScheduleTab: React.FC<{ classes: Class[]; settings: SchoolSettings }> = ({
     if (!selectedClass) return;
     try {
       setIsSaving(true);
-      const scheduleData = [];
+      const scheduleData: Array<Omit<Schedule, 'id' | 'name' | 'isTemplate'>> = [];
       
       // Собираем все уроки с выбранными предметами
       for (let dayIndex = 0; dayIndex < 6; dayIndex++) {
@@ -152,20 +192,45 @@ const ScheduleTab: React.FC<{ classes: Class[]; settings: SchoolSettings }> = ({
           const lessonData = schedule[dayIndex]?.[lessonIndex];
           if (lessonData && lessonData.subject) {
             const times = calculateLessonTime(settings, lessonIndex + 1);
-            scheduleData.push({
+            
+            const lessonItem = {
               classId: parseInt(selectedClass, 10),
               dayOfWeek: dayIndex + 1,
               lessonNumber: lessonIndex + 1,
               subject: lessonData.subject,
               teacherId: lessonData.teacherId || null,
               startTime: times.startTime,
-              endTime: times.endTime
-            });
+              endTime: times.endTime,
+              classroom: lessonData.classroom || ''
+            };
+            
+            if (viewMode === ViewMode.ByDates && startDate && dayIndex < weekDates.length) {
+              // Если режим просмотра по датам, добавляем конкретную дату
+              scheduleData.push({
+                ...lessonItem,
+                date: format(weekDates[dayIndex], 'yyyy-MM-dd')
+              });
+            } else {
+              // Иначе это обычное недельное расписание
+              scheduleData.push(lessonItem);
+            }
           }
         }
       }
 
-      await updateSchedule(selectedClass, scheduleData);
+      if (viewMode === ViewMode.ByDates && startDate) {
+        // Для каждого дня недели сохраняем отдельно
+        const savingPromises = weekDates.map((date, index) => {
+          const formattedDate = format(date, 'yyyy-MM-dd');
+          const daySchedule = scheduleData.filter(item => item.dayOfWeek === index + 1);
+          return updateSchedule(selectedClass, daySchedule, formattedDate);
+        });
+        await Promise.all(savingPromises);
+      } else {
+        // Сохраняем обычное недельное расписание
+        await updateSchedule(selectedClass, scheduleData);
+      }
+      
       setSnackbar({
         open: true,
         message: 'Расписание сохранено',
@@ -180,6 +245,12 @@ const ScheduleTab: React.FC<{ classes: Class[]; settings: SchoolSettings }> = ({
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleViewModeChange = (event: React.MouseEvent<HTMLElement>, newMode: ViewMode | null) => {
+    if (newMode !== null) {
+      setViewMode(newMode);
     }
   };
 
@@ -236,20 +307,60 @@ const ScheduleTab: React.FC<{ classes: Class[]; settings: SchoolSettings }> = ({
 
   return (
     <Box>
-      <FormControl fullWidth sx={{ mb: 3 }}>
-        <InputLabel>Выберите класс</InputLabel>
-        <Select
-          value={selectedClass}
-          label="Выберите класс"
-          onChange={(e) => setSelectedClass(e.target.value)}
-        >
-          {classes.map((cls) => (
-            <MenuItem key={cls.id} value={cls.id}>
-              {cls.grade}-{cls.letter}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={12} md={4}>
+          <FormControl fullWidth>
+            <InputLabel>Выберите класс</InputLabel>
+            <Select
+              value={selectedClass}
+              label="Выберите класс"
+              onChange={(e) => setSelectedClass(e.target.value)}
+            >
+              {classes.map((cls) => (
+                <MenuItem key={cls.id} value={cls.id}>
+                  {cls.grade}-{cls.letter}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <ToggleButtonGroup
+            value={viewMode}
+            exclusive
+            onChange={handleViewModeChange}
+            aria-label="режим просмотра"
+            fullWidth
+          >
+            <ToggleButton value={ViewMode.ByWeek} aria-label="на неделю">
+              <ViewWeek sx={{ mr: 1 }} />
+              На шаблон недели
+            </ToggleButton>
+            <ToggleButton value={ViewMode.ByDates} aria-label="на даты">
+              <CalendarMonth sx={{ mr: 1 }} />
+              На даты
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Grid>
+        {viewMode === ViewMode.ByDates && (
+          <Grid item xs={12} md={4}>
+            <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={ruLocale}>
+              <DatePicker
+                label="Начало недели"
+                value={startDate}
+                onChange={setStartDate}
+                format="dd.MM.yyyy"
+                slotProps={{ 
+                  textField: { 
+                    fullWidth: true,
+                    helperText: "Выберите понедельник" 
+                  } 
+                }}
+              />
+            </LocalizationProvider>
+          </Grid>
+        )}
+      </Grid>
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -259,98 +370,110 @@ const ScheduleTab: React.FC<{ classes: Class[]; settings: SchoolSettings }> = ({
 
       {selectedClass && (
         <>
-          <TableContainer component={Paper}>
-            <Table>
+          <TableContainer component={Paper} sx={{ mb: 2 }}>
+            <Table size="small">
               <TableHead>
                 <TableRow>
+                  <TableCell width={100}>День</TableCell>
                   <TableCell>Урок</TableCell>
-                  {daysOfWeek.map((day, index) => (
-                    <TableCell key={index}>{day}</TableCell>
-                  ))}
+                  <TableCell>Время</TableCell>
+                  <TableCell>Предмет</TableCell>
+                  <TableCell>Учитель</TableCell>
+                  <TableCell>Кабинет</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {Array.from({ length: 16 }, (_, lessonIndex) => (
-                  <TableRow key={lessonIndex}>
-                    <TableCell>
-                      {lessonIndex + 1}
-                      <Typography variant="caption" color="textSecondary" display="block">
-                        {lessonIndex < 8 ? '(1 смена)' : '(2 смена)'}
-                      </Typography>
-                    </TableCell>
-                    {daysOfWeek.map((_, dayIndex) => {
-                      const lessonData = schedule[dayIndex]?.[lessonIndex] || { subject: '', teacherId: '' };
-                      const times = lessonData.subject ? calculateLessonTime(settings, lessonIndex + 1) : null;
-                      return (
-                        <TableCell key={dayIndex}>
-                          <Stack spacing={1}>
-                            <FormControl fullWidth size="small">
-                              <Select
-                                value={lessonData.subject || ''}
-                                onChange={(e) => handleScheduleChange(
-                                  dayIndex + 1,
-                                  lessonIndex + 1,
-                                  'subject',
-                                  e.target.value
-                                )}
-                              >
-                                <MenuItem value="">Нет урока</MenuItem>
-                                {subjects.map((subject) => (
-                                  <MenuItem key={subject.id} value={subject.name}>
-                                    {subject.name}
-                                  </MenuItem>
-                                ))}
-                              </Select>
-                            </FormControl>
-                            
-                            {lessonData.subject && (
-                              <FormControl fullWidth size="small">
-                                <InputLabel>Учитель</InputLabel>
-                                <Select
-                                  value={lessonData.teacherId || ''}
-                                  label="Учитель"
-                                  onChange={(e) => handleScheduleChange(
-                                    dayIndex + 1,
-                                    lessonIndex + 1,
-                                    'teacherId',
-                                    e.target.value
-                                  )}
-                                >
-                                  <MenuItem value="">Не назначен</MenuItem>
-                                  {teachers.map((teacher) => (
-                                    <MenuItem key={teacher.id} value={teacher.id}>
-                                      {teacher.name}
-                                    </MenuItem>
-                                  ))}
-                                </Select>
-                              </FormControl>
-                            )}
-                            
-                            {lessonData.subject && times && (
-                              <Typography variant="caption" color="textSecondary">
-                                {times.startTime} - {times.endTime}
-                              </Typography>
-                            )}
-                          </Stack>
+                {Array.from({ length: 6 }).map((_, dayIndex) => {
+                  const daySchedule = schedule[dayIndex] || {};
+                  const dayName = viewMode === ViewMode.ByDates && weekDates[dayIndex]
+                    ? format(weekDates[dayIndex], 'dd.MM.yyyy')
+                    : ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'][dayIndex];
+                  
+                  return Array.from({ length: 8 }).map((_, lessonIndex) => {
+                    const lesson = daySchedule[lessonIndex] || { subject: '', teacherId: '', classroom: '' };
+                    const times = calculateLessonTime(settings, lessonIndex + 1);
+                    
+                    return (
+                      <TableRow key={`${dayIndex}-${lessonIndex}`}>
+                        {lessonIndex === 0 && (
+                          <TableCell rowSpan={8}>{dayName}</TableCell>
+                        )}
+                        <TableCell>{lessonIndex + 1}</TableCell>
+                        <TableCell>{times.startTime} - {times.endTime}</TableCell>
+                        <TableCell>
+                          <FormControl fullWidth size="small">
+                            <Select
+                              value={lesson.subject || ''}
+                              onChange={(e) => handleScheduleChange(dayIndex + 1, lessonIndex + 1, 'subject', e.target.value)}
+                              displayEmpty
+                            >
+                              <MenuItem value="">
+                                <em>Нет</em>
+                              </MenuItem>
+                              {subjects.map((subject) => (
+                                <MenuItem key={subject.id} value={subject.name}>
+                                  {subject.name}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
                         </TableCell>
-                      );
-                    })}
-                  </TableRow>
-                ))}
+                        <TableCell>
+                          <FormControl fullWidth size="small">
+                            <Select
+                              value={lesson.teacherId || ''}
+                              onChange={(e) => handleScheduleChange(dayIndex + 1, lessonIndex + 1, 'teacherId', e.target.value)}
+                              displayEmpty
+                              disabled={!lesson.subject}
+                            >
+                              <MenuItem value="">
+                                <em>Не назначен</em>
+                              </MenuItem>
+                              {teachers.map((teacher) => (
+                                <MenuItem key={teacher.id} value={teacher.id}>
+                                  {teacher.name}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        </TableCell>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            value={lesson.classroom || ''}
+                            onChange={(e) => handleScheduleChange(dayIndex + 1, lessonIndex + 1, 'classroom', e.target.value)}
+                            disabled={!lesson.subject}
+                            placeholder="Кабинет"
+                          />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  });
+                }).flat()}
               </TableBody>
             </Table>
           </TableContainer>
-          <Button
-            variant="contained"
-            onClick={handleSaveSchedule}
-            disabled={loading}
-            startIcon={<SaveIcon />}
-            sx={{ mt: 2 }}
-          >
-            Сохранить расписание
-          </Button>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button
+              variant="contained"
+              onClick={handleSaveSchedule}
+              disabled={isSaving}
+              startIcon={isSaving ? <CircularProgress size={24} /> : null}
+            >
+              {viewMode === ViewMode.ByDates ? 'Сохранить расписание на даты' : 'Сохранить шаблон расписания'}
+            </Button>
+          </Box>
         </>
       )}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
+      >
+        <Alert severity={snackbar.severity}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };
@@ -584,6 +707,54 @@ const Dashboard: React.FC = () => {
                 onChange={(e) => handleSettingsChange('secondShiftStart', e.target.value)}
                 slotProps={{ inputLabel: { shrink: true } }}
               />
+              
+              <Box sx={{ width: '100%', mt: 3, mb: 2 }}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Настройки округления оценок
+                </Typography>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  Оценка округляется вверх, если дробная часть больше или равна указанному значению.
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', mt: 2 }}>
+                  <Box sx={{ width: '80%', mr: 2 }}>
+                    <Slider
+                      value={settings.gradeRoundingThreshold || 0.5}
+                      onChange={(_, newValue) => handleSettingsChange('gradeRoundingThreshold', newValue as number)}
+                      min={0.01}
+                      max={0.99}
+                      step={0.01}
+                      valueLabelDisplay="auto"
+                      valueLabelFormat={(value) => value.toFixed(2)}
+                      marks={[
+                        { value: 0.1, label: '0.1' },
+                        { value: 0.5, label: '0.5' },
+                        { value: 0.9, label: '0.9' }
+                      ]}
+                    />
+                  </Box>
+                  <TextField
+                    type="number"
+                    value={settings.gradeRoundingThreshold || 0.5}
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value);
+                      if (!isNaN(value) && value >= 0.01 && value <= 0.99) {
+                        handleSettingsChange('gradeRoundingThreshold', value);
+                      }
+                    }}
+                    inputProps={{ 
+                      min: 0.01, 
+                      max: 0.99,
+                      step: 0.01
+                    }}
+                    sx={{ width: '100px' }}
+                  />
+                </Box>
+                <Typography variant="body2" sx={{ mt: 1 }}>
+                  <strong>Пример:</strong> При значении {settings.gradeRoundingThreshold || 0.5}, оценка 3.{Math.round((settings.gradeRoundingThreshold || 0.5) * 100)} 
+                  будет округлена до 4, а 3.{Math.round((settings.gradeRoundingThreshold || 0.5) * 100) - 1} до 3.
+                </Typography>
+              </Box>
+              
               <Button
                 variant="contained"
                 onClick={handleSettingsSave}

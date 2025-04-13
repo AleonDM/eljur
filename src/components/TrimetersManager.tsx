@@ -28,6 +28,7 @@ import {
 } from '@mui/material';
 import { Edit as EditIcon, Delete as DeleteIcon, Add as AddIcon } from '@mui/icons-material';
 import { getTrimesters, createTrimester, updateTrimester, deleteTrimester, Trimester } from '../services/api';
+import { formatAcademicYear, getCurrentAcademicYear } from '../utils/formatUtils';
 
 const gradeTypeLabels: Record<string, string> = {
   TRIMESTER1: '1 триместр',
@@ -58,7 +59,13 @@ const TrimetersManager: React.FC = () => {
   const [success, setSuccess] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [formData, setFormData] = useState<TrimesterFormData>(initialFormData);
+  const [formData, setFormData] = useState<TrimesterFormData>({
+    type: 'TRIMESTER1',
+    startDate: '',
+    endDate: '',
+    academicYear: getCurrentAcademicYear(),
+    isActive: true
+  });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -243,11 +250,11 @@ const TrimetersManager: React.FC = () => {
         </Box>
       ) : (
         sortedYears.map(year => (
-          <Paper key={year} sx={{ mb: 3, overflow: 'hidden' }}>
-            <Box sx={{ bgcolor: 'primary.main', color: 'white', p: 1, px: 2 }}>
-              <Typography variant="h6">Учебный год {year}-{year + 1}</Typography>
-            </Box>
-            <TableContainer>
+          <Box key={year} sx={{ mb: 4 }}>
+            <Typography variant="h6" gutterBottom>
+              Учебный год: {formatAcademicYear(year)}
+            </Typography>
+            <TableContainer component={Paper}>
               <Table>
                 <TableHead>
                   <TableRow>
@@ -298,7 +305,7 @@ const TrimetersManager: React.FC = () => {
                 </TableBody>
               </Table>
             </TableContainer>
-          </Paper>
+          </Box>
         ))
       )}
 
@@ -325,13 +332,13 @@ const TrimetersManager: React.FC = () => {
 
             <TextField
               name="academicYear"
-              label="Учебный год (начало)"
+              label="Учебный год"
               type="number"
               value={formData.academicYear}
               onChange={handleInputChange}
               fullWidth
               InputProps={{ inputProps: { min: 2000, max: 2100 } }}
-              helperText="Год начала учебного года"
+              helperText={`Учебный год будет отображаться как ${formatAcademicYear(formData.academicYear)}`}
             />
 
             <TextField

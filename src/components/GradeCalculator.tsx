@@ -9,8 +9,10 @@ import {
   TextField,
   Divider,
   Stack,
-  Alert,
-  useTheme,
+  FormControlLabel,
+  Tooltip,
+  Switch,
+  Grid,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -18,6 +20,7 @@ import {
   Calculate as CalculateIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
+import { roundGrade, getGradeRoundingThreshold, formatGrade } from '../utils/gradeUtils';
 
 interface GradeCalculatorProps {
   subjectGrades?: (number | string)[];
@@ -25,63 +28,83 @@ interface GradeCalculatorProps {
 }
 
 const GradeCalculator: React.FC<GradeCalculatorProps> = ({ subjectGrades = [], onClose }) => {
-  const [grades, setGrades] = useState<(number | string)[]>(subjectGrades);
-  const [inputValue, setInputValue] = useState<string>('');
+  const [grades, setGrades] = useState<(number | string)[]>([]);
+  const [newGrade, setNewGrade] = useState<string>('');
   const [average, setAverage] = useState<number>(0);
-  const [error, setError] = useState<string>('');
-  const theme = useTheme();
+  const [roundingThreshold, setRoundingThreshold] = useState<number>(0.5);
+  const [useRounding, setUseRounding] = useState<boolean>(false);
+
+  useEffect(() => {
+    // Фильтруем только числовые оценки для расчета среднего
+    const numericGrades = subjectGrades.filter(
+      grade => typeof grade === 'number' || (!isNaN(Number(grade)) && grade !== '')
+    );
+    
+    setGrades(numericGrades.map(g => typeof g === 'string' ? Number(g) : g));
+    
+    // Загружаем настройки округления
+    const loadRoundingThreshold = async () => {
+      try {
+        const threshold = await getGradeRoundingThreshold();
+        setRoundingThreshold(threshold);
+      } catch (error) {
+        console.error('Ошибка при загрузке порога округления:', error);
+      }
+    };
+    
+    loadRoundingThreshold();
+  }, [subjectGrades]);
 
   useEffect(() => {
     calculateAverage();
-  }, [grades]);
-
-  useEffect(() => {
-    setGrades(subjectGrades);
-  }, [subjectGrades]);
+  }, [grades, useRounding]);
 
   const calculateAverage = () => {
-    const numericGrades = grades.filter(grade => {
-      if (typeof grade === 'number') return true;
-      if (typeof grade === 'string' && !isNaN(Number(grade))) return true;
-      return false;
-    }).map(grade => typeof grade === 'string' ? Number(grade) : grade) as number[];
-    
+    if (grades.length === 0) {
+      setAverage(0);
+      return;
+    }
+
+    const numericGrades = grades.filter(
+      grade => typeof grade === 'number' || (!isNaN(Number(grade)) && grade !== '')
+    ) as number[];
+
     if (numericGrades.length === 0) {
       setAverage(0);
       return;
     }
+
+    const sum = numericGrades.reduce((a, b) => a + b, 0);
+    const avg = sum / numericGrades.length;
     
-    const sum = numericGrades.reduce((acc, grade) => acc + grade, 0);
-    setAverage(parseFloat((sum / numericGrades.length).toFixed(2)));
+    setAverage(useRounding ? roundGrade(avg, roundingThreshold) : avg);
   };
 
   const handleAddGrade = () => {
-    const grade = parseInt(inputValue);
-    if (isNaN(grade)) {
-      setError('Пожалуйста, введите число');
-      return;
-    }
+    if (newGrade.trim() === '') return;
     
-    if (grade < 1 || grade > 5) {
-      setError('Оценка должна быть от 1 до 5');
-      return;
+    // Проверяем, является ли ввод числом и он в диапазоне от 1 до 5
+    const gradeValue = Number(newGrade);
+    if (!isNaN(gradeValue) && gradeValue >= 1 && gradeValue <= 5) {
+      setGrades([...grades, gradeValue]);
+      setNewGrade('');
     }
-    
-    setGrades([...grades, grade]);
-    setInputValue('');
-    setError('');
+  };
+
+  const handleGradeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewGrade(e.target.value);
   };
 
   const handleRemoveGrade = (index: number) => {
-    const newGrades = [...grades];
-    newGrades.splice(index, 1);
-    setGrades(newGrades);
+    const updatedGrades = [...grades];
+    updatedGrades.splice(index, 1);
+    setGrades(updatedGrades);
   };
 
   const handleReset = () => {
     setGrades([]);
-    setInputValue('');
-    setError('');
+    setNewGrade('');
+    setAverage(0);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -117,11 +140,7 @@ const GradeCalculator: React.FC<GradeCalculatorProps> = ({ subjectGrades = [], o
   };
 
   const getAverageColor = () => {
-    if (average >= 4.5) return '#1B5E20'; // Темно-зеленый
-    if (average >= 3.5) return '#4CAF50'; // Зеленый
-    if (average >= 2.5) return '#FFC107'; // Желтый
-    if (average >= 1.5) return '#F44336'; // Красный
-    return '#B71C1C'; // Темно-красный
+    return getGradeColor(average);
   };
 
   return (
@@ -141,76 +160,93 @@ const GradeCalculator: React.FC<GradeCalculatorProps> = ({ subjectGrades = [], o
       <Divider sx={{ mb: 2 }} />
 
       <Box sx={{ mb: 3 }}>
-        <Stack direction="row" spacing={2} alignItems="center">
-          <TextField
-            label="Оценка (1-5)"
-            variant="outlined"
-            size="small"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={handleKeyPress}
-            error={!!error}
-            helperText={error}
-            sx={{ width: '150px' }}
-            type="number"
-            inputProps={{ min: 1, max: 5 }}
-            color="primary"
-          />
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<AddIcon />}
-            onClick={handleAddGrade}
-          >
-            Добавить
-          </Button>
-          <Button
-            variant="outlined"
-            color="secondary"
-            startIcon={<RefreshIcon />}
-            onClick={handleReset}
-          >
-            Сбросить
-          </Button>
-        </Stack>
+        <FormControlLabel
+          control={
+            <Switch 
+              checked={useRounding} 
+              onChange={(e) => setUseRounding(e.target.checked)} 
+              color="primary"
+            />
+          }
+          label={
+            <Tooltip title={`Порог округления: ${roundingThreshold}. Пример: 3.${Math.round(roundingThreshold * 100)} → 4`}>
+              <Typography variant="body2">Округлять оценки</Typography>
+            </Tooltip>
+          }
+        />
       </Box>
 
-      {grades.length > 0 ? (
-        <>
-          <Typography variant="subtitle1" gutterBottom color="primary">
-            Введенные оценки:
+      <Box sx={{ display: 'flex', mb: 3 }}>
+        <TextField
+          label="Оценка"
+          variant="outlined"
+          size="small"
+          value={newGrade}
+          onChange={handleGradeChange}
+          onKeyPress={handleKeyPress}
+          sx={{ mr: 1, flexGrow: 1 }}
+          inputProps={{ inputMode: 'decimal', pattern: '[1-5]', max: 5, min: 1, step: 0.1 }}
+        />
+        <Button 
+          variant="contained" 
+          startIcon={<AddIcon />}
+          onClick={handleAddGrade}
+        >
+          Добавить
+        </Button>
+      </Box>
+      
+      {grades.length > 0 && (
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="subtitle1" gutterBottom>
+            Текущие оценки:
           </Typography>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 3 }}>
+          <Grid container spacing={1}>
             {grades.map((grade, index) => (
-              <Chip
-                key={index}
-                label={grade}
-                onDelete={() => handleRemoveGrade(index)}
-                sx={{
-                  color: 'white',
-                  bgcolor: getGradeColor(grade),
-                  fontWeight: 'bold',
-                }}
-              />
+              <Grid item key={index}>
+                <Chip
+                  label={grade}
+                  onDelete={() => handleRemoveGrade(index)}
+                  deleteIcon={<DeleteIcon />}
+                  sx={{ 
+                    bgcolor: getGradeColor(grade), 
+                    color: 'white',
+                    fontWeight: 'bold'
+                  }}
+                />
+              </Grid>
             ))}
-          </Box>
-
-          <Divider sx={{ mb: 2 }} />
-
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography variant="subtitle1" color="primary">
-              Всего оценок: <strong>{grades.length}</strong>
-            </Typography>
-            <Typography variant="h5" sx={{ color: getAverageColor(), fontWeight: 'bold' }}>
-              Средний балл: {average}
-            </Typography>
-          </Box>
-        </>
-      ) : (
-        <Alert severity="info">
-          Добавьте оценки для расчета среднего балла
-        </Alert>
+          </Grid>
+        </Box>
       )}
+      
+      <Box sx={{ textAlign: 'center', mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Средний балл:
+        </Typography>
+        <Chip
+          label={average === 0 ? '—' : formatGrade(average)}
+          sx={{
+            bgcolor: average === 0 ? 'grey.500' : getAverageColor(),
+            color: 'white',
+            fontWeight: 'bold',
+            fontSize: '1.25rem',
+            py: 1,
+            height: 'auto',
+          }}
+        />
+      </Box>
+      
+      <Stack direction="row" spacing={2} justifyContent="center">
+        <Button variant="outlined" color="error" onClick={handleReset}>
+          Сбросить все
+        </Button>
+        {onClose && (
+          <Button variant="contained" onClick={onClose}>
+            Закрыть
+          </Button>
+        )}
+      </Stack>
     </Paper>
   );
 };

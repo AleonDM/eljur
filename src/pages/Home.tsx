@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   CardContent,
-  useTheme,
   IconButton,
   Fab,
 } from '@mui/material';
@@ -21,12 +20,19 @@ import {
   KeyboardArrowDown as ArrowDownIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
+import { DEFAULT_PRIMARY_COLOR } from '../contexts/ThemeContext';
 
 const Home = () => {
-  const theme = useTheme();
+  const { customColor } = useCustomTheme();
   const navigate = useNavigate();
   const [activeFeature, setActiveFeature] = useState(0);
   const [isBottom, setIsBottom] = useState(false);
+
+  // Используем пользовательский цвет или стандартный синий
+  const primaryColorForHome = customColor || DEFAULT_PRIMARY_COLOR;
+  // Для градиента на главной странице
+  const secondaryColorForHome = '#9c27b0';
 
   const features = [
     {
@@ -82,7 +88,7 @@ const Home = () => {
     <Box
       sx={{
         minHeight: '100vh',
-        background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
+        background: `linear-gradient(135deg, ${primaryColorForHome} 0%, ${secondaryColorForHome} 100%)`,
         pt: -8,
       }}
     >
@@ -128,11 +134,14 @@ const Home = () => {
             size="large"
             onClick={() => navigate('/login')}
             sx={{
-              bgcolor: 'white',
-              color: 'primary.main',
+              bgcolor: '#1976d2',
+              color: 'white',
               '&:hover': {
-                bgcolor: 'grey.100',
+                bgcolor: '#1565c0',
+                color: 'white'
               },
+              textTransform: 'none',
+              fontWeight: 500
             }}
           >
             Войти в систему
@@ -147,7 +156,7 @@ const Home = () => {
             component="h2"
             align="center"
             className="main-title"
-            sx={{ mb: 6, color: theme.palette.primary.main }}
+            sx={{ mb: 6, color: primaryColorForHome }}
           >
             Возможности системы
           </Typography>
@@ -185,7 +194,7 @@ const Home = () => {
                         minHeight: 250,
                       }}
                     >
-                      <Box sx={{ p: 2, color: theme.palette.primary.main }}>
+                      <Box sx={{ p: 2, color: primaryColorForHome }}>
                         {feature.icon}
                       </Box>
                       <CardContent>
@@ -247,7 +256,7 @@ const Home = () => {
                     width: 8,
                     height: 8,
                     borderRadius: '50%',
-                    bgcolor: index === activeFeature ? 'primary.main' : 'grey.300',
+                    bgcolor: index === activeFeature ? primaryColorForHome : 'grey.300',
                     cursor: 'pointer',
                   }}
                   onClick={() => setActiveFeature(index)}
@@ -267,14 +276,13 @@ const Home = () => {
       </Box>
 
       <Fab
-        color="primary"
         sx={{
           position: 'fixed',
           bottom: 16,
           right: 16,
           zIndex: 1000,
           bgcolor: 'white',
-          color: theme.palette.primary.main,
+          color: primaryColorForHome,
           '&:hover': {
             bgcolor: '#f0f0f0',
           },

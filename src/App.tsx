@@ -14,6 +14,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import StudentHomework from './pages/student/HomeworkView';
 import StudentSchedule from './pages/student/Schedule';
 import TeacherHomework from './pages/teacher/HomeworkManagement';
+import TeacherSchedule from './pages/teacher/Schedule';
 import Messages from './pages/Messages';
 import { Box, Typography } from '@mui/material';
 import { useEffect } from 'react';
@@ -24,8 +25,8 @@ import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import UserProfile from './components/UserProfile';
 
 const AppContent = () => {
-  const { mode } = useTheme();
-  const theme = createAppTheme(mode);
+  const { mode, customColor } = useTheme();
+  const theme = createAppTheme(mode, customColor);
 
   return (
     <MuiThemeProvider theme={theme}>
@@ -81,6 +82,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute role="teacher">
             <TeacherHomework />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/teacher/schedule"
+        element={
+          <ProtectedRoute role="teacher">
+            <TeacherSchedule />
           </ProtectedRoute>
         }
       />

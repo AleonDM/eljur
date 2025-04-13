@@ -1,19 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   List,
-  ListItem,
   ListItemText,
   ListItemAvatar,
-  Avatar,
   Typography,
   Badge,
   Paper,
   Box,
   CircularProgress,
   Alert,
-  Divider,
   TextField,
-  IconButton,
   InputAdornment,
   Button,
   Dialog,
@@ -27,13 +23,13 @@ import {
   Person as PersonIcon,
   Search as SearchIcon,
   Add as AddIcon,
-  Close as CloseIcon
+  Close as CloseIcon,
+  AttachFile as AttachFileIcon
 } from '@mui/icons-material';
-import { format } from 'date-fns';
-import { ru } from 'date-fns/locale';
 import { useSelector } from 'react-redux';
 import { RootState } from '../store';
 import AvatarUpload from './AvatarUpload';
+import { io, Socket } from 'socket.io-client';
 
 interface User {
   id: number;
@@ -52,14 +48,40 @@ interface Conversation {
   lastMessage: {
     content: string;
     createdAt: string;
+    hasAttachment?: boolean;
+    attachmentType?: string;
+    attachmentName?: string;
   };
   unreadCount: number;
+}
+
+interface Message {
+  id: number;
+  content: string;
+  fromUserId: number;
+  toUserId: number;
+  isRead: boolean;
+  hasAttachment?: boolean;
+  attachmentType?: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  createdAt: string;
+  from?: {
+    id: number;
+    name: string;
+    role: string;
+    avatarUrl?: string;
+  };
 }
 
 interface MessageListProps {
   onSelectConversation: (userId: number) => void;
   selectedUserId?: number;
 }
+
+// Получаем URL API и сокета из переменных окружения или используем localhost для разработки
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
 
 const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selectedUserId }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -70,8 +92,135 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const socketRef = useRef<Socket | null>(null);
   
   const currentUser = useSelector((state: RootState) => state.auth.user);
+
+  // Установка соединения с Socket.IO
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    // Создаем соединение с Socket.IO
+    socketRef.current = io(SOCKET_URL, {
+      auth: { token },
+      transports: ['websocket', 'polling'],
+      reconnection: true
+    });
+
+    socketRef.current.on('connect', () => {
+      console.log('MessageList: Socket.IO подключен');
+      setSocketConnected(true);
+    });
+
+    socketRef.current.on('connect_error', (err) => {
+      console.error('MessageList: Ошибка подключения Socket.IO:', err.message);
+      setSocketConnected(false);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      console.log('MessageList: Socket.IO отключен');
+      setSocketConnected(false);
+    });
+
+    // Обработка новых сообщений
+    socketRef.current.on('message', (data) => {
+      if (data.type === 'NEW_MESSAGE' && data.message) {
+        handleNewMessage(data.message);
+      } else if (data.type === 'MESSAGE_DELETED' && data.messageId) {
+        // При необходимости можно обработать удаление сообщения
+        fetchConversations();
+      } else if (data.type === 'MESSAGES_READ' && data.fromUserId) {
+        // Обработка статуса прочтения
+        handleMessagesRead(data.fromUserId);
+      }
+    });
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, []);
+
+  // Обработка новых сообщений через Socket.IO
+  const handleNewMessage = (message: Message) => {
+    if (!currentUser) return;
+
+    // Определяем ID собеседника (обязательно числовой тип)
+    const fromUserId = typeof message.fromUserId === 'string' 
+      ? parseInt(message.fromUserId, 10) 
+      : message.fromUserId;
+    
+    const toUserId = typeof message.toUserId === 'string'
+      ? parseInt(message.toUserId, 10)
+      : message.toUserId;
+
+    const currentUserIdNum = typeof currentUser.id === 'string'
+      ? parseInt(currentUser.id, 10)
+      : currentUser.id;
+    
+    const selectedUserIdNum = selectedUserId !== undefined 
+      ? (typeof selectedUserId === 'string' ? parseInt(selectedUserId, 10) : selectedUserId)
+      : undefined;
+
+    // Определяем ID собеседника  
+    const otherUserId = fromUserId === currentUserIdNum ? toUserId : fromUserId;
+    
+    // Проверяем, существует ли диалог с этим пользователем
+    const existingConversationIndex = conversations.findIndex(
+      conv => conv.user.id === otherUserId
+    );
+
+    if (existingConversationIndex !== -1) {
+      // Обновляем существующий диалог
+      const updatedConversations = [...conversations];
+      const conversation = updatedConversations[existingConversationIndex];
+      
+      // Обновляем последнее сообщение
+      conversation.lastMessage = {
+        content: message.content,
+        createdAt: message.createdAt,
+        hasAttachment: message.hasAttachment,
+        attachmentType: message.attachmentType,
+        attachmentName: message.attachmentName
+      };
+      
+      // Если сообщение пришло не от текущего пользователя, увеличиваем счетчик непрочитанных
+      if (fromUserId !== currentUserIdNum) {
+        // Увеличиваем счетчик только если диалог не выбран или не совпадает с текущим выбранным
+        if (selectedUserIdNum === undefined || fromUserId !== selectedUserIdNum) {
+          conversation.unreadCount += 1;
+        }
+      }
+      
+      // Перемещаем этот диалог в начало списка
+      updatedConversations.splice(existingConversationIndex, 1);
+      updatedConversations.unshift(conversation);
+      
+      setConversations(updatedConversations);
+    } else {
+      // Полностью обновляем список диалогов, если появился новый
+      fetchConversations();
+    }
+  };
+
+  // Обработка статуса прочтения сообщений
+  const handleMessagesRead = (fromUserId: number) => {
+    setConversations(prevConversations => 
+      prevConversations.map(conv => {
+        if (conv.user.id === fromUserId) {
+          return {
+            ...conv,
+            unreadCount: 0
+          };
+        }
+        return conv;
+      })
+    );
+  };
 
   useEffect(() => {
     if (isSearchDialogOpen) {
@@ -83,9 +232,27 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
     fetchConversations();
   }, []);
 
+  // Отслеживаем выбор диалога, чтобы сбрасывать счетчик непрочитанных
+  useEffect(() => {
+    if (selectedUserId) {
+      // Обнуляем счетчик непрочитанных для выбранного диалога
+      setConversations(prevConversations => 
+        prevConversations.map(conv => {
+          if (conv.user.id === selectedUserId) {
+            return {
+              ...conv,
+              unreadCount: 0
+            };
+          }
+          return conv;
+        })
+      );
+    }
+  }, [selectedUserId]);
+
   const fetchConversations = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/messages/conversations', {
+      const response = await fetch(`${API_URL}/api/messages/conversations`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -98,6 +265,16 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
       }
 
       const data = await response.json();
+      
+      // Если есть выбранный диалог, обнуляем для него счетчик непрочитанных
+      if (selectedUserId) {
+        data.forEach((conv: Conversation) => {
+          if (conv.user.id === selectedUserId) {
+            conv.unreadCount = 0;
+          }
+        });
+      }
+      
       setConversations(data);
       setError(null);
     } catch (err) {
@@ -117,7 +294,7 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
     setSearchLoading(true);
     try {
       const endpoint = currentUser?.role === 'teacher' ? '/api/users/students' : '/api/users/teachers';
-      const response = await fetch(`http://localhost:3001${endpoint}`, {
+      const response = await fetch(`${API_URL}${endpoint}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -144,7 +321,7 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
   const handleStartConversation = async (userId: number) => {
     try {
       // Отправляем пустое сообщение для создания диалога
-      const response = await fetch('http://localhost:3001/api/messages', {
+      const response = await fetch(`${API_URL}/api/messages`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -191,7 +368,14 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
   return (
     <>
       <Paper elevation={2} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+        <Box sx={{ 
+          p: 2, 
+          borderBottom: 1, 
+          borderColor: 'divider',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between'
+        }}>
           <Button
             fullWidth
             variant="outlined"
@@ -201,6 +385,25 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
           >
             Начать новый диалог
           </Button>
+          
+          {/* Индикатор статуса подключения */}
+          {socketConnected ? (
+            <Chip 
+              label="Онлайн" 
+              size="small" 
+              color="success" 
+              variant="outlined" 
+              sx={{ ml: 1, flexShrink: 0 }} 
+            />
+          ) : (
+            <Chip 
+              label="Оффлайн" 
+              size="small" 
+              color="error" 
+              variant="outlined" 
+              sx={{ ml: 1, flexShrink: 0 }} 
+            />
+          )}
         </Box>
 
         <Box sx={{ flex: 1, overflow: 'auto' }}>
@@ -279,9 +482,17 @@ const MessageList: React.FC<MessageListProps> = ({ onSelectConversation, selecte
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
+                            fontWeight: conversation.unreadCount > 0 ? 'bold' : 'normal'
                           }}
                         >
-                          {conversation.lastMessage?.content}
+                          {conversation.lastMessage?.hasAttachment ? (
+                            <Box component="span" sx={{ display: 'flex', alignItems: 'center' }}>
+                              <AttachFileIcon fontSize="small" sx={{ mr: 0.5 }} />
+                              {conversation.lastMessage?.content || 'Вложение'}
+                            </Box>
+                          ) : (
+                            conversation.lastMessage?.content
+                          )}
                         </Typography>
                         <Typography
                           component="span"

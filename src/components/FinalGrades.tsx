@@ -12,35 +12,26 @@ import {
   Chip,
 } from '@mui/material';
 import { FinalGrade } from '../services/api';
+import { getGradeColor } from '../utils/gradeUtils';
 
 interface FinalGradesProps {
   grades: FinalGrade[];
   year: number;
 }
 
-const getGradeColor = (value: number) => {
-  switch (value) {
-    case 5:
-      return '#1B5E20';
-    case 4:
-      return '#4CAF50';
-    case 3:
-      return '#FFC107';
-    case 2:
-      return '#F44336';
-    default:
-      return 'inherit';
-  }
-};
-
 const FinalGrades: React.FC<FinalGradesProps> = ({ grades, year }) => {
   const subjects = Array.from(new Set(grades.map(g => g.subject))).sort();
+
+  // Форматируем учебный год в виде "2024-2025"
+  const formatAcademicYear = (year: number) => {
+    return `${year}-${year + 1}`;
+  };
 
   return (
     <Paper sx={{ mb: 3 }}>
       <Box sx={{ p: 2 }}>
         <Typography variant="h6" gutterBottom>
-          Итоговые оценки за {year} год
+          Итоговые оценки за {formatAcademicYear(year)} учебный год
         </Typography>
       </Box>
       

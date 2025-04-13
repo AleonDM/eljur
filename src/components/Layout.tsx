@@ -44,14 +44,6 @@ const Layout = ({ children }: LayoutProps) => {
     setColorPickerOpen(false);
   };
 
-  const colors = [
-    { name: 'Синий', value: '#1976d2' },
-    { name: 'Зеленый', value: '#2e7d32' },
-    { name: 'Фиолетовый', value: '#7b1fa2' },
-    { name: 'Оранжевый', value: '#ed6c02' },
-    { name: 'Красный', value: '#d32f2f' },
-  ];
-
   const isHomePage = location.pathname === '/';
 
   const getNavItems = () => {
@@ -61,6 +53,7 @@ const Layout = ({ children }: LayoutProps) => {
       case 'teacher':
         return [
           { text: 'Оценки', icon: <GradeIcon />, path: '/teacher' },
+          { text: 'Расписание', icon: <ScheduleIcon />, path: '/teacher/schedule' },
           { text: 'Домашние задания', icon: <AssignmentIcon />, path: '/teacher/homework' },
           { text: 'Сообщения', icon: <MessageIcon />, path: '/teacher/messages' },
         ];
@@ -104,9 +97,6 @@ const Layout = ({ children }: LayoutProps) => {
         <AppBar 
           position="static" 
           color="primary"
-          sx={{
-            bgcolor: mode === 'light' ? (customColor || DEFAULT_PRIMARY_COLOR) : undefined
-          }}
         >
           <Toolbar>
             {isAuthenticated && (
@@ -127,7 +117,8 @@ const Layout = ({ children }: LayoutProps) => {
                 flexGrow: 0, 
                 cursor: 'pointer', 
                 mr: 4,
-                fontSize: { xs: '1rem', sm: '1.25rem' }
+                fontSize: { xs: '1rem', sm: '1.25rem' },
+                color: 'white'
               }}
               onClick={() => navigate('/')}
             >

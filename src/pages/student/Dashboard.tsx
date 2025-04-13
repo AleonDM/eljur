@@ -33,10 +33,12 @@ import {
   Info as InfoIcon,
   Calculate as CalculateIcon,
   ContentCopy as CopyIcon,
+  EmojiEvents as TrophyIcon,
 } from '@mui/icons-material';
 import { getGrades, getSubjects, getFinalGrades, Grade, Subject, FinalGrade } from '../../services/api';
 import GradeCalculator from '../../components/GradeCalculator';
 import FinalGrades from '../../components/FinalGrades';
+import StudentRating from '../../components/StudentRating';
 import {
   LineChart,
   Line,
@@ -49,6 +51,7 @@ import {
 } from 'recharts';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
+import { formatAcademicYear, getCurrentAcademicYear } from '../../utils/formatUtils';
 
 interface GradeDialogProps {
   grade: Grade | null;
@@ -135,7 +138,7 @@ const StudentDashboard = () => {
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [calculatorGrades, setCalculatorGrades] = useState<(number | string)[]>([]);
   const [finalGrades, setFinalGrades] = useState<FinalGrade[]>([]);
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedYear, setSelectedYear] = useState<number>(getCurrentAcademicYear());
   const [activeTab, setActiveTab] = useState(0);
 
   const loadData = async () => {
@@ -299,6 +302,7 @@ const StudentDashboard = () => {
         <Tabs value={activeTab} onChange={handleTabChange}>
           <Tab label="Текущие оценки" />
           <Tab label="Итоговые оценки" />
+          <Tab label="Рейтинг" icon={<TrophyIcon />} iconPosition="start" />
         </Tabs>
       </Box>
 
@@ -462,7 +466,7 @@ const StudentDashboard = () => {
                 .sort((a, b) => b - a)
                 .map(year => (
                   <MenuItem key={year} value={year}>
-                    {year}
+                    {formatAcademicYear(year)}
                   </MenuItem>
                 ))}
             </Select>
@@ -472,6 +476,10 @@ const StudentDashboard = () => {
             year={selectedYear}
           />
         </Box>
+      </TabPanel>
+
+      <TabPanel value={activeTab} index={2}>
+        <StudentRating />
       </TabPanel>
 
       <GradeDialog

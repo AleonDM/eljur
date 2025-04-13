@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, FormEvent } from 'react';
 import {
   Box,
   Paper,
@@ -27,8 +27,13 @@ import SendIcon from '@mui/icons-material/Send';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import Done from '@mui/icons-material/Done';
+import DoneAll from '@mui/icons-material/DoneAll';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
 import AvatarUpload from './AvatarUpload';
+import { io, Socket } from 'socket.io-client';
+import { useSelector } from 'react-redux';
+import { RootState } from '../store';
 
 interface Message {
   id: number;
@@ -56,8 +61,9 @@ interface MessageDialogProps {
   onBackToList?: () => void;
 }
 
-const API_URL = 'http://localhost:3001';
-const WS_URL = 'ws://localhost:3001';
+// Получаем URL API и сокета из переменных окружения или используем localhost для разработки
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
 
 const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUserId, onBackToList }) => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -67,17 +73,18 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [messageToDelete, setMessageToDelete] = useState<Message | null>(null);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [previewImageUrl, setPreviewImageUrl] = useState('');
-  const [wsConnected, setWsConnected] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
   const { mode } = useAppTheme();
   const [showScrollButton, setShowScrollButton] = useState(false);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const MAX_RECONNECT_ATTEMPTS = 5;
   const RECONNECT_INTERVAL = 3000;
@@ -105,6 +112,11 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
           'Content-Type': 'application/json'
         }
       });
+      
+      // Уведомляем через сокет о прочтении
+      if (socketRef.current && socketRef.current.connected) {
+        socketRef.current.emit('mark_messages_read', { fromUserId: selectedUserId });
+      }
     } catch (err) {
       console.error('Error marking messages as read:', err);
     }
@@ -112,91 +124,124 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
 
   const getFullImageUrl = (url?: string) => {
     if (!url) return '';
-    if (url.startsWith('http')) return url;
+    if (url.startsWith('blob:') || url.startsWith('http')) return url;
     return `${API_URL}${url}`;
   };
 
-  const connectWebSocket = useCallback(() => {
-    let reconnectAttempts = 0;
+  const connectSocket = useCallback(() => {
+    // Очищаем старый таймер, если он существует
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    
+    // Закрываем предыдущее соединение, если оно существует
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
 
-    const connect = () => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        console.log('WebSocket уже подключен');
-        return;
-      }
-
+    try {
       const token = localStorage.getItem('token');
       if (!token) {
         console.error('Токен не найден');
+        setError('Не удалось подключиться: токен не найден');
         return;
       }
 
-      try {
-        wsRef.current = new WebSocket(`${WS_URL}/?token=${token}`);
+      console.log('Подключение к Socket.IO...');
+      
+      // Создаем новое подключение с токеном в auth
+      socketRef.current = io(SOCKET_URL, {
+        auth: { token },
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
+        reconnectionDelay: RECONNECT_INTERVAL
+      });
 
-        wsRef.current.onopen = () => {
-          console.log('WebSocket соединение установлено');
-          reconnectAttempts = 0;
-          setWsConnected(true);
-          setError(null);
-        };
+      // Обработчики событий
+      socketRef.current.on('connect', () => {
+        console.log('Socket.IO подключен!');
+        setSocketConnected(true);
+        setError(null);
+      });
 
-        wsRef.current.onclose = (event) => {
-          console.log(`WebSocket соединение закрыто. Код: ${event.code}, Причина: ${event.reason}`);
-          setWsConnected(false);
+      socketRef.current.on('connect_error', (err) => {
+        console.error('Ошибка подключения Socket.IO:', err.message);
+        setSocketConnected(false);
+        setError(`Ошибка подключения: ${err.message}`);
+      });
 
-          if (event.code === 1000 || event.code === 1001) {
-            return;
+      socketRef.current.on('disconnect', (reason) => {
+        console.log(`Socket.IO отключен: ${reason}`);
+        setSocketConnected(false);
+        
+        if (reason === 'io server disconnect') {
+          // Сервер разорвал соединение, необходимо переподключиться вручную
+          reconnectTimerRef.current = setTimeout(() => {
+            console.log('Пробуем переподключиться вручную...');
+            socketRef.current?.connect();
+          }, RECONNECT_INTERVAL);
+        }
+      });
+
+      socketRef.current.on('message', (data) => {
+        console.log('Получено новое событие через Socket.IO:', data);
+        
+        if (data.type === 'NEW_MESSAGE' && data.message) {
+          setMessages(prev => [...prev, data.message]);
+          scrollToBottom();
+          
+          // Если сообщение от текущего собеседника, отмечаем как прочитанное
+          if (selectedUserId && data.message.fromUserId === selectedUserId) {
+            markMessagesAsRead();
           }
+        } 
+        else if (data.type === 'MESSAGE_DELETED' && data.messageId) {
+          setMessages(prev => prev.filter(msg => msg.id !== data.messageId));
+        }
+        else if (data.type === 'MESSAGES_READ' && data.fromUserId) {
+          // Обновляем статус прочтения для сообщений, отправленных указанному пользователю
+          setMessages(prev => prev.map(msg => 
+            msg.fromUserId === currentUserId && msg.toUserId === data.fromUserId
+              ? { ...msg, isRead: true }
+              : msg
+          ));
+        }
+      });
 
-          if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS && selectedUserId) {
-            console.log(`Попытка переподключения ${reconnectAttempts + 1} из ${MAX_RECONNECT_ATTEMPTS}`);
-            setTimeout(() => {
-              reconnectAttempts++;
-              connect();
-            }, RECONNECT_INTERVAL);
-          } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            setError('Не удалось установить соединение. Попробуйте обновить страницу.');
-          }
-        };
+      socketRef.current.on('connect_status', (status) => {
+        console.log('Статус подключения:', status);
+        if (status.connected) {
+          setSocketConnected(true);
+        }
+      });
 
-        wsRef.current.onerror = (error) => {
-          console.error('Ошибка WebSocket соединения:', error);
-          setWsConnected(false);
-        };
-
-        wsRef.current.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'NEW_MESSAGE' && data.message) {
-              setMessages(prev => [...prev, data.message]);
-              scrollToBottom();
-            } else if (data.type === 'MESSAGE_DELETED' && data.messageId) {
-              setMessages(prev => prev.filter(msg => msg.id !== data.messageId));
-            }
-          } catch (error) {
-            console.error('Ошибка при обработке сообщения WebSocket:', error);
-          }
-        };
-      } catch (error) {
-        console.error('Ошибка при создании WebSocket соединения:', error);
-        setWsConnected(false);
-        setError('Ошибка подключения к серверу сообщений');
-      }
-    };
-
-    connect();
-
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close(1000, 'Закрытие соединения');
-      }
-    };
-  }, [selectedUserId]);
+      return () => {
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+          socketRef.current = null;
+        }
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
+      };
+    } catch (error) {
+      console.error('Ошибка при настройке Socket.IO:', error);
+      setSocketConnected(false);
+      setError('Ошибка при подключении к серверу сообщений');
+      return undefined;
+    }
+  }, [currentUserId, selectedUserId]);
 
   useEffect(() => {
-    connectWebSocket();
-  }, [connectWebSocket]);
+    const cleanup = connectSocket();
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [connectSocket]);
 
   // Загружаем начальные сообщения при выборе пользователя
   useEffect(() => {
@@ -265,13 +310,21 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
       const formData = new FormData();
       formData.append('content', newMessage.trim() || '');
       formData.append('toUserId', selectedUserId.toString());
+      
+      // Сохраняем копию файла для локального отображения
+      const localFile = selectedFile;
+      let tempUrl = '';
+      
       if (selectedFile) {
         formData.append('file', selectedFile);
         console.log('Прикрепляю файл:', selectedFile.name, selectedFile.type, selectedFile.size);
+        
+        // Создаем временный URL для предварительного отображения изображения
+        if (selectedFile.type.startsWith('image/')) {
+          tempUrl = URL.createObjectURL(selectedFile);
+          console.log('Создан временный URL для изображения:', tempUrl);
+        }
       }
-
-      // Сохраняем копию файла для локального отображения
-      const localFile = selectedFile ? selectedFile : null;
 
       // Очищаем форму до отправки запроса
       setNewMessage('');
@@ -302,22 +355,23 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
       const message = await response.json();
       console.log('Сообщение успешно отправлено:', message);
       
-      // Создаем локальную копию сообщения с URL для отображения
-      if (localFile && localFile.type.startsWith('image/') && message.attachmentUrl) {
-        // Создаем временный URL для локального отображения изображения
-        const tempUrl = URL.createObjectURL(localFile);
-        console.log('Создан временный URL для изображения:', tempUrl);
-        
-        // Сохраняем связь между временным URL и реальным URL на сервере
+      // Уведомляем через сокет (для отладки, основная отправка происходит через API)
+      if (socketRef.current && socketRef.current.connected) {
+        socketRef.current.emit('send_message', { 
+          messageId: message.id,
+          toUserId: selectedUserId
+        });
+      }
+      
+      // Добавляем сообщение локально
+      if (localFile && localFile.type.startsWith('image/')) {
+        // Создаем локальную копию сообщения с временным URL
         const localMessage = {
           ...message,
           _tempAttachmentUrl: tempUrl
         };
-        
-        // Добавляем сообщение локально
         setMessages(prev => [...prev, localMessage]);
       } else {
-        // Добавляем сообщение локально
         setMessages(prev => [...prev, message]);
       }
       
@@ -397,6 +451,16 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
     setImagePreviewOpen(true);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Отправка сообщения при нажатии Enter (без Shift)
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault(); // Предотвращаем перенос строки
+      if (newMessage.trim() || selectedFile) {
+        handleSendMessage(e as unknown as React.FormEvent);
+      }
+    }
+  };
+
   if (!selectedUserId) {
     return (
       <Box
@@ -413,7 +477,7 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
     );
   }
 
-  if (loading) {
+  if (loading && messages.length === 0) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100%">
         <CircularProgress />
@@ -446,6 +510,24 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
             <Typography variant="subtitle1" fontWeight="medium">
               Вернуться к списку диалогов
             </Typography>
+            {!socketConnected && (
+              <Chip 
+                label="Оффлайн" 
+                size="small" 
+                color="error" 
+                variant="outlined" 
+                sx={{ ml: 'auto' }} 
+              />
+            )}
+            {socketConnected && (
+              <Chip 
+                label="Онлайн" 
+                size="small" 
+                color="success" 
+                variant="outlined" 
+                sx={{ ml: 'auto' }} 
+              />
+            )}
           </Box>
         )}
 
@@ -501,7 +583,7 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
                   color: message.fromUserId === currentUserId ? 'primary.contrastText' : 'text.primary',
                 }}
               >
-                <Box sx={{ mb: 0.5 }}>
+                <Box sx={{ mb: 0.5, display: 'flex', alignItems: 'center' }}>
                   <Typography
                     variant="caption"
                     component="span"
@@ -521,12 +603,28 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
                   >
                     {new Date(message.createdAt).toLocaleTimeString()}
                   </Typography>
+                  
+                  {/* Индикатор прочтения для отправленных сообщений */}
+                  {message.fromUserId === currentUserId && (
+                    <Box component="span" sx={{ ml: 1, display: 'inline-flex', alignItems: 'center' }}>
+                      {message.isRead ? (
+                        <Tooltip title="Прочитано">
+                          <DoneAll fontSize="small" sx={{ opacity: 0.8, color: 'inherit' }} />
+                        </Tooltip>
+                      ) : (
+                        <Tooltip title="Отправлено">
+                          <Done fontSize="small" sx={{ opacity: 0.7, color: 'inherit' }} />
+                        </Tooltip>
+                      )}
+                    </Box>
+                  )}
+                  
                   {message.fromUserId === currentUserId && (
                     <IconButton
                       size="small"
                       onClick={(e) => handleDeleteClick(message)}
                       sx={{
-                        ml: 1,
+                        ml: 'auto',
                         color: 'inherit',
                         opacity: 0.7,
                         '&:hover': {
@@ -645,17 +743,19 @@ const MessageDialog: React.FC<MessageDialogProps> = ({ selectedUserId, currentUs
             placeholder="Введите сообщение..."
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
+            onKeyDown={handleKeyDown}
             size="small"
             multiline
             maxRows={4}
             error={!!error}
             helperText={error}
             color="primary"
+            disabled={!socketConnected && loading}
           />
           <IconButton 
             type="submit" 
             color="primary" 
-            disabled={(!newMessage.trim() && !selectedFile) || loading}
+            disabled={(!newMessage.trim() && !selectedFile) || loading || !socketConnected}
           >
             {loading ? <CircularProgress size={24} color="primary" /> : <SendIcon />}
           </IconButton>

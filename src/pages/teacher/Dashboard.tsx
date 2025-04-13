@@ -31,11 +31,35 @@ import {
   Tab,
   Grid,
   Tooltip,
+  Badge,
+  Drawer,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
 } from '@mui/material';
-import { Delete as DeleteIcon, ArrowLeft, ArrowRight, AutoAwesome } from '@mui/icons-material';
-import { getGrades, createGrade, deleteGrade, getClasses, getSubjects, getClassFinalGrades, User, Grade, Class, Subject, FinalGrade, getCurrentTrimester, getActiveTrimesters, Trimester } from '../../services/api';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { ru as ruLocale } from 'date-fns/locale';
+import { 
+  Delete as DeleteIcon, 
+  ArrowLeft, 
+  ArrowRight, 
+  AutoAwesome, 
+  School as SchoolIcon, 
+  AccessTime as TimeIcon, 
+  Room as RoomIcon,
+  Menu as MenuIcon,
+  AssignmentOutlined as AssignmentIcon,
+  Today as TodayIcon,
+  Event as EventIcon
+} from '@mui/icons-material';
+import { getGrades, createGrade, deleteGrade, getClasses, getSubjects, getClassFinalGrades, User, Grade, Class, Subject, FinalGrade, getCurrentTrimester, getActiveTrimesters, Trimester, getTeacherSchedule, Schedule } from '../../services/api';
 import FinalGradeEditor from '../../components/FinalGradeEditor';
 import AutoFinalGradeCalculator from '../../components/AutoFinalGradeCalculator';
+import { formatAcademicYear, getCurrentAcademicYear } from '../../utils/formatUtils';
 
 const gradeTypeLabels: Record<string, string> = {
   TRIMESTER1: '1 триместр',
@@ -137,6 +161,253 @@ const TabPanel = (props: TabPanelProps) => {
   );
 };
 
+interface ScheduleTabProps {
+  onScheduleLoad?: (schedule: Schedule[]) => void;
+}
+
+const ScheduleTab: React.FC<ScheduleTabProps> = ({ onScheduleLoad }) => {
+  const [schedule, setSchedule] = useState<Schedule[]>([]);
+  const [loadingSchedule, setLoadingSchedule] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string>('');
+  const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
+  
+  // Названия дней недели
+  const daysOfWeek = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+  
+  useEffect(() => {
+    loadSchedule();
+  }, []);
+  
+  const loadSchedule = async () => {
+    try {
+      setLoadingSchedule(true);
+      setScheduleError('');
+      const data = await getTeacherSchedule();
+      setSchedule(data);
+      if (onScheduleLoad) {
+        onScheduleLoad(data);
+      }
+    } catch (err) {
+      setScheduleError(err instanceof Error ? err.message : 'Ошибка загрузки расписания');
+    } finally {
+      setLoadingSchedule(false);
+    }
+  };
+  
+  // Получаем день недели для выбранной даты (1-6, где 1 - понедельник)
+  const getSelectedDayOfWeek = (): number | null => {
+    if (!selectedDate) return null;
+    // getDay() возвращает 0-6, где 0 - воскресенье, нам нужно конвертировать в 1-6 (пн-сб)
+    const day = selectedDate.getDay();
+    return day === 0 ? null : day; // Если воскресенье, возвращаем null
+  };
+  
+  // Получаем уроки для выбранного дня
+  const getLessonsForSelectedDay = () => {
+    const dayOfWeek = getSelectedDayOfWeek();
+    if (dayOfWeek === null) return [];
+    return schedule.filter(item => item.dayOfWeek === dayOfWeek)
+      .sort((a, b) => a.lessonNumber - b.lessonNumber);
+  };
+  
+  // Группировка расписания по дням недели (для отображения всего расписания)
+  const scheduleByDay = daysOfWeek.map((day, index) => {
+    const dayIndex = index + 1; // Дни недели в БД нумеруются с 1
+    const lessonsForDay = schedule.filter(item => item.dayOfWeek === dayIndex);
+    return {
+      day,
+      dayIndex,
+      lessons: lessonsForDay.sort((a, b) => a.lessonNumber - b.lessonNumber)
+    };
+  });
+  
+  if (loadingSchedule) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+        <CircularProgress />
+      </Box>
+    );
+  }
+  
+  if (scheduleError) {
+    return (
+      <Alert severity="error" sx={{ mt: 2, mb: 2 }}>
+        {scheduleError}
+      </Alert>
+    );
+  }
+  
+  const selectedDayOfWeek = getSelectedDayOfWeek();
+  const selectedDayName = selectedDayOfWeek !== null ? daysOfWeek[selectedDayOfWeek - 1] : 'Воскресенье';
+  const lessonsForSelectedDay = getLessonsForSelectedDay();
+  
+  return (
+    <Box sx={{ p: 2 }}>
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h5" gutterBottom>
+          Моё расписание уроков
+        </Typography>
+        
+        <Box sx={{ display: 'flex', flexDirection: {xs: 'column', sm: 'row'}, gap: 2, alignItems: {xs: 'flex-start', sm: 'center'} }}>
+          <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={ruLocale}>
+            <DatePicker
+              label="Выберите дату"
+              value={selectedDate}
+              onChange={setSelectedDate}
+              format="dd.MM.yyyy"
+              slotProps={{ textField: { fullWidth: true } }}
+            />
+          </LocalizationProvider>
+          
+          <Typography variant="subtitle1" sx={{ ml: 2 }}>
+            {selectedDayName} {selectedDate && `, ${selectedDate.toLocaleDateString('ru-RU')}`}
+          </Typography>
+        </Box>
+      </Box>
+      
+      {schedule.length === 0 ? (
+        <Alert severity="info">
+          У вас пока нет назначенных уроков в расписании
+        </Alert>
+      ) : selectedDayOfWeek === null ? (
+        <Alert severity="info">
+          В воскресенье уроки не проводятся
+        </Alert>
+      ) : lessonsForSelectedDay.length === 0 ? (
+        <Alert severity="info">
+          На этот день у вас нет назначенных уроков
+        </Alert>
+      ) : (
+        <Box>
+          <Typography variant="h6" sx={{ mb: 2 }}>
+            Расписание на {selectedDayName}:
+          </Typography>
+          
+          <Paper sx={{ p: 2 }}>
+            {lessonsForSelectedDay.map(lesson => (
+              <Box 
+                key={`${lesson.dayOfWeek}-${lesson.lessonNumber}`}
+                sx={{ 
+                  mb: 2, 
+                  p: 2, 
+                  borderRadius: 1,
+                  bgcolor: 'background.paper',
+                  boxShadow: 1
+                }}
+              >
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <Typography variant="subtitle1" fontWeight="bold">
+                    {lesson.subject}
+                  </Typography>
+                  <Chip 
+                    size="small" 
+                    label={`Урок ${lesson.lessonNumber}`}
+                    color="primary"
+                  />
+                </Box>
+                
+                <Stack spacing={1}>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <SchoolIcon fontSize="small" sx={{ mr: 1, color: 'primary.main' }} />
+                    <Typography variant="body2">
+                      Класс: {lesson.classId ? `${lesson.Class?.grade || ''}-${lesson.Class?.letter || ''}` : 'Не указан'}
+                    </Typography>
+                  </Box>
+                  
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <TimeIcon fontSize="small" sx={{ mr: 1, color: 'primary.main' }} />
+                    <Typography variant="body2">
+                      Время: {lesson.startTime} - {lesson.endTime}
+                    </Typography>
+                  </Box>
+                  
+                  {lesson.classroom && (
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <RoomIcon fontSize="small" sx={{ mr: 1, color: 'primary.main' }} />
+                      <Typography variant="body2">
+                        Кабинет: {lesson.classroom}
+                      </Typography>
+                    </Box>
+                  )}
+                </Stack>
+              </Box>
+            ))}
+          </Paper>
+          
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>
+              Все расписание по дням недели:
+            </Typography>
+            
+            <Grid container spacing={2}>
+              {scheduleByDay.map(({ day, dayIndex, lessons }) => (
+                <Grid item xs={12} md={6} lg={4} key={dayIndex}>
+                  {lessons.length > 0 && (
+                    <Paper sx={{ p: 2, height: '100%' }}>
+                      <Typography variant="h6" sx={{ mb: 2, pb: 1, borderBottom: 1, borderColor: 'divider' }}>
+                        {day}
+                      </Typography>
+                      
+                      {lessons.map(lesson => (
+                        <Box 
+                          key={`${lesson.dayOfWeek}-${lesson.lessonNumber}`}
+                          sx={{ 
+                            mb: 2, 
+                            p: 2, 
+                            borderRadius: 1,
+                            bgcolor: 'background.paper',
+                            boxShadow: 1
+                          }}
+                        >
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                            <Typography variant="subtitle1" fontWeight="bold">
+                              {lesson.subject}
+                            </Typography>
+                            <Chip 
+                              size="small" 
+                              label={`Урок ${lesson.lessonNumber}`}
+                              color="primary"
+                            />
+                          </Box>
+                          
+                          <Stack spacing={1}>
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              <SchoolIcon fontSize="small" sx={{ mr: 1, color: 'primary.main' }} />
+                              <Typography variant="body2">
+                                Класс: {lesson.classId ? `${lesson.Class?.grade || ''}-${lesson.Class?.letter || ''}` : 'Не указан'}
+                              </Typography>
+                            </Box>
+                            
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              <TimeIcon fontSize="small" sx={{ mr: 1, color: 'primary.main' }} />
+                              <Typography variant="body2">
+                                Время: {lesson.startTime} - {lesson.endTime}
+                              </Typography>
+                            </Box>
+                            
+                            {lesson.classroom && (
+                              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                <RoomIcon fontSize="small" sx={{ mr: 1, color: 'primary.main' }} />
+                                <Typography variant="body2">
+                                  Кабинет: {lesson.classroom}
+                                </Typography>
+                              </Box>
+                            )}
+                          </Stack>
+                        </Box>
+                      ))}
+                    </Paper>
+                  )}
+                </Grid>
+              ))}
+            </Grid>
+          </Box>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
 const TeacherDashboard = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -150,7 +421,7 @@ const TeacherDashboard = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [currentMonth, setCurrentMonth] = useState<number>(new Date().getMonth());
-  const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
+  const [currentYear, setCurrentYear] = useState<number>(getCurrentAcademicYear());
   const [editingCell, setEditingCell] = useState<{ studentId: string; date: string; value: string | number } | null>(null);
   const [finalGradeDialogOpen, setFinalGradeDialogOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<string>('');
@@ -167,6 +438,7 @@ const TeacherDashboard = () => {
   const [gradesTabValue, setGradesTabValue] = useState(0);
   const [autoFinalGradeDialogOpen, setAutoFinalGradeDialogOpen] = useState(false);
   const [selectedStudentGrades, setSelectedStudentGrades] = useState<Grade[]>([]);
+  const [mainTabValue, setMainTabValue] = useState(0);
   
   const [newGrade, setNewGrade] = useState({
     studentId: '',
@@ -176,6 +448,11 @@ const TeacherDashboard = () => {
     comment: '',
   });
 
+  // Для мобильного меню
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [teacherSchedule, setTeacherSchedule] = useState<Schedule[]>([]);
+  const [hasUpcomingLessons, setHasUpcomingLessons] = useState(false);
+  
   const loadData = async () => {
     try {
       setLoading(true);
@@ -341,15 +618,28 @@ const TeacherDashboard = () => {
 
   const getGradeColor = (value: number | string) => {
     switch (value) {
-      case 5: return '#1B5E20'; // темно-зеленый
-      case 4: return '#4CAF50'; // зеленый
-      case 3: return '#FFC107'; // желтый
-      case 2: return '#F44336'; // красный
-      case 1: return '#B71C1C'; // темно-красный
-      case 'Н': return '#9C27B0'; // фиолетовый
-      case 'У': return '#2196F3'; // синий
-      case 'О': return '#FF9800'; // оранжевый
-      default: return 'inherit';
+      case 5:
+        return '#1B5E20'; // Темно-зеленый
+      case 4:
+        return '#4CAF50'; // Зеленый
+      case 3:
+        return '#FFC107'; // Желтый
+      case 2:
+        return '#F44336'; // Красный
+      case 1:
+        return '#B71C1C'; // Темно-красный
+      case 'Н':
+        return '#9C27B0'; // Фиолетовый
+      case 'У':
+        return '#2196F3'; // Синий
+      case 'О':
+        return '#FF9800'; // Оранжевый
+      default:
+        // Проверяем, является ли строковое значение числом
+        if (typeof value === 'string' && !isNaN(Number(value))) {
+          return getGradeColor(Number(value));
+        }
+        return 'inherit';
     }
   };
 
@@ -506,30 +796,25 @@ const TeacherDashboard = () => {
         return;
       }
       
-      // Проверяем, что дата находится в пределах активного триместра
+      // Ищем триместр для даты оценки, но не блокируем сохранение, если триместр не найден
+      let trimesterId = undefined;
       if (activeTrimesters.length > 0) {
         const gradeDate = new Date(editingCell.date);
-        const formattedDate = gradeDate.toISOString().split('T')[0];
         
-        let activeTrimester = activeTrimesters.find(trimester => {
+        // Ищем триместр, к которому относится дата оценки
+        const matchingTrimester = activeTrimesters.find(trimester => {
           const startDate = new Date(trimester.startDate);
           const endDate = new Date(trimester.endDate);
           return gradeDate >= startDate && gradeDate <= endDate;
         });
         
-        if (!activeTrimester) {
-          // Если не нашли активный триместр по дате, выбираем первый активный триместр
-          if (activeTrimesters.some(t => t.isActive)) {
-            activeTrimester = activeTrimesters.find(t => t.isActive);
-            console.log('Используем первый активный триместр:', activeTrimester);
-          } else {
-            setError('Невозможно выставить оценку на эту дату. Дата не входит в активный триместр.');
-            return;
-          }
+        // Если нашли подходящий триместр, используем его ID
+        if (matchingTrimester) {
+          trimesterId = matchingTrimester.id;
+          console.log('Найден триместр для оценки:', matchingTrimester);
+        } else {
+          console.log('Триместр для даты не найден, оценка будет сохранена без привязки к триместру');
         }
-        
-        // Если нашли активный триместр, сохраняем его ID
-        console.log('Saving grade with trimester:', activeTrimester);
       }
       
       console.log('Сохранение оценки:', {
@@ -537,12 +822,7 @@ const TeacherDashboard = () => {
         subject: selectedSubject,
         value: gradeValue,
         date: editingCell.date,
-        trimesterId: activeTrimesters.find(t => {
-          const gradeDate = new Date(editingCell.date);
-          const startDate = new Date(t.startDate);
-          const endDate = new Date(t.endDate);
-          return gradeDate >= startDate && gradeDate <= endDate;
-        })?.id
+        trimesterId
       });
       
       // Проверяем, существует ли уже оценка для этого ученика и даты
@@ -550,14 +830,6 @@ const TeacherDashboard = () => {
         grade.student.id === editingCell.studentId && 
         grade.date.split('T')[0] === editingCell.date
       );
-      
-      // Определяем trimesterId для новой оценки
-      const trimesterId = activeTrimesters.find(t => {
-        const gradeDate = new Date(editingCell.date);
-        const startDate = new Date(t.startDate);
-        const endDate = new Date(t.endDate);
-        return gradeDate >= startDate && gradeDate <= endDate;
-      })?.id;
       
       if (existingGrade) {
         // Удаляем существующую оценку
@@ -612,6 +884,74 @@ const TeacherDashboard = () => {
     }
   };
 
+  const handleMainTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setMainTabValue(newValue);
+  };
+
+  // Добавляем функцию для проверки предстоящих уроков
+  const checkUpcomingLessons = (schedule: Schedule[]) => {
+    if (!schedule.length) return false;
+    
+    const now = new Date();
+    const today = now.getDay() || 7; // Преобразуем 0 (воскресенье) в 7
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    
+    // Проверяем есть ли уроки сегодня, которые еще не начались
+    return schedule.some(lesson => {
+      if (lesson.dayOfWeek !== today) return false;
+      
+      const [startHour, startMinute] = lesson.startTime.split(':').map(Number);
+      return (startHour > currentHour) || 
+             (startHour === currentHour && startMinute > currentMinute);
+    });
+  };
+  
+  // Обработчик для сохранения расписания
+  const handleScheduleLoad = (schedule: Schedule[]) => {
+    setTeacherSchedule(schedule);
+    setHasUpcomingLessons(checkUpcomingLessons(schedule));
+  };
+
+  const handleDrawerToggle = () => {
+    setDrawerOpen(!drawerOpen);
+  };
+
+  const navigateTo = (tabValue: number) => {
+    setMainTabValue(tabValue);
+    setDrawerOpen(false);
+  };
+
+  // Мобильное боковое меню
+  const drawer = (
+    <Box>
+      <List>
+        <ListItem disablePadding>
+          <ListItemButton 
+            onClick={() => navigateTo(0)}
+            selected={mainTabValue === 0}
+          >
+            <ListItemIcon>
+              <AssignmentIcon />
+            </ListItemIcon>
+            <ListItemText primary="Оценки" />
+          </ListItemButton>
+        </ListItem>
+        <ListItem disablePadding>
+          <ListItemButton 
+            onClick={() => navigateTo(1)}
+            selected={mainTabValue === 1}
+          >
+            <ListItemIcon>
+              <EventIcon />
+            </ListItemIcon>
+            <ListItemText primary="Расписание" />
+          </ListItemButton>
+        </ListItem>
+      </List>
+    </Box>
+  );
+
   if (loading && !grades.length && !classes.length) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
@@ -621,365 +961,405 @@ const TeacherDashboard = () => {
   }
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
-        Панель учителя
-      </Typography>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
+    <Box sx={{ flexGrow: 1 }}>
+      {/* Мобильное меню */}
+      {isMobile && (
+        <Drawer
+          variant="temporary"
+          open={drawerOpen}
+          onClose={handleDrawerToggle}
+          ModalProps={{
+            keepMounted: true,
+          }}
+          sx={{
+            '& .MuiDrawer-paper': { boxSizing: 'border-box', width: 240 },
+          }}
+        >
+          {drawer}
+        </Drawer>
       )}
 
-      <Paper sx={{ mb: 3 }}>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-          <Typography variant="h5" sx={{ p: 2, pb: 0 }}>
-            Оценки
-          </Typography>
-          <Tabs value={gradesTabValue} onChange={handleGradesTabChange} sx={{ px: 2 }}>
-            <Tab label="Текущие оценки" />
-            <Tab label="Итоговые оценки" />
-          </Tabs>
-        </Box>
+      <Box sx={{ p: 3 }}>
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
 
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h5">Оценки</Typography>
-          {currentTrimester && (
-            <Chip 
-              color="primary" 
-              label={`Текущий триместр: ${gradeTypeLabels[currentTrimester.type]} (${new Date(currentTrimester.startDate).toLocaleDateString()} - ${new Date(currentTrimester.endDate).toLocaleDateString()})`} 
-            />
-          )}
-        </Box>
+        {/* Оставляем только кнопку мобильного меню */}
+        {isMobile && (
+          <Box sx={{ mb: 3 }}>
+            <IconButton
+              color="primary"
+              aria-label="open drawer"
+              edge="start"
+              onClick={handleDrawerToggle}
+            >
+              <MenuIcon />
+            </IconButton>
+          </Box>
+        )}
 
-        <TabPanel value={gradesTabValue} index={0}>
-          <Box sx={{ p: 2 }}>
-            <Grid container spacing={2} alignItems="center" sx={{ mb: 3 }}>
-              <Grid item xs={12} sm={4}>
-                <FormControl fullWidth>
-                  <InputLabel>Класс</InputLabel>
-                  <Select
-                    value={selectedClass}
-                    label="Класс"
-                    onChange={(e) => setSelectedClass(e.target.value)}
-                    disabled={loading}
-                  >
-                    <MenuItem value="">
-                      <em>Выберите класс</em>
-                    </MenuItem>
-                    {classes.map((cls) => (
-                      <MenuItem key={cls.id} value={cls.id}>
-                        {cls.grade}-{cls.letter}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <FormControl fullWidth>
-                  <InputLabel>Предмет</InputLabel>
-                  <Select
-                    value={selectedSubject}
-                    label="Предмет"
-                    onChange={(e) => setSelectedSubject(e.target.value)}
-                    disabled={loading || !selectedClass}
-                  >
-                    <MenuItem value="">
-                      <em>Выберите предмет</em>
-                    </MenuItem>
-                    {getAvailableSubjects().map((subject) => (
-                      <MenuItem key={subject.id} value={subject.name}>
-                        {subject.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <IconButton onClick={handlePrevMonth} disabled={loading}>
-                    <ArrowLeft />
-                  </IconButton>
-                  <Typography variant="h6" sx={{ mx: 2 }}>
-                    {MONTHS[currentMonth]} {currentYear}
-                  </Typography>
-                  <IconButton onClick={handleNextMonth} disabled={loading}>
-                    <ArrowRight />
-                  </IconButton>
-                </Box>
-              </Grid>
-            </Grid>
+        <TabPanel value={mainTabValue} index={0}>
+          <Paper sx={{ mb: 3 }}>
+            <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+              <Typography variant="h5" sx={{ p: 2, pb: 0 }}>
+                Оценки
+              </Typography>
+              <Tabs value={gradesTabValue} onChange={handleGradesTabChange} sx={{ px: 2 }}>
+                <Tab label="Текущие оценки" />
+                <Tab label="Итоговые оценки" />
+              </Tabs>
+            </Box>
 
-            {selectedClass && selectedSubject && (
-              <TableContainer sx={{ maxHeight: 'calc(100vh - 300px)', overflowY: 'auto' }}>
-                <Table stickyHeader>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ minWidth: 200, position: 'sticky', left: 0, zIndex: 3, bgcolor: 'background.paper' }}>
-                        Ученик
-                      </TableCell>
-                      {getDatesInMonth().map(date => (
-                        <TableCell 
-                          key={date.toISOString()} 
-                          align="center"
-                          sx={{ 
-                            minWidth: 50,
-                            bgcolor: date.getDay() === 0 || date.getDay() === 6 
-                              ? 'rgba(0, 0, 0, 0.04)' 
-                              : 'inherit'
-                          }}
-                        >
-                          <Tooltip title={date.toLocaleDateString('ru-RU', { weekday: 'short' })}>
-                            <Typography variant="body2">{date.getDate()}</Typography>
-                          </Tooltip>
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {students.map(student => (
-                      <TableRow key={student.id}>
-                        <TableCell 
-                          sx={{ 
-                            position: 'sticky', 
-                            left: 0, 
-                            zIndex: 2,
-                            bgcolor: 'background.paper'
-                          }}
-                        >
-                          {student.name}
-                        </TableCell>
-                        {getDatesInMonth().map(date => {
-                          const grade = getGradeForStudentAndDate(student.id, date);
-                          const isEditing = editingCell && 
-                                          editingCell.studentId === student.id && 
-                                          editingCell.date === date.toISOString().split('T')[0];
-                          
-                          return (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h5">Оценки</Typography>
+              {currentTrimester && (
+                <Chip 
+                  color="primary" 
+                  label={`Текущий триместр: ${gradeTypeLabels[currentTrimester.type]} (${new Date(currentTrimester.startDate).toLocaleDateString()} - ${new Date(currentTrimester.endDate).toLocaleDateString()})`} 
+                />
+              )}
+            </Box>
+
+            <TabPanel value={gradesTabValue} index={0}>
+              <Box sx={{ p: 2 }}>
+                <Grid container spacing={2} alignItems="center" sx={{ mb: 3 }}>
+                  <Grid item xs={12} sm={4}>
+                    <FormControl fullWidth>
+                      <InputLabel>Класс</InputLabel>
+                      <Select
+                        value={selectedClass}
+                        label="Класс"
+                        onChange={(e) => setSelectedClass(e.target.value)}
+                        disabled={loading}
+                      >
+                        <MenuItem value="">
+                          <em>Выберите класс</em>
+                        </MenuItem>
+                        {classes.map((cls) => (
+                          <MenuItem key={cls.id} value={cls.id}>
+                            {cls.grade}-{cls.letter}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <FormControl fullWidth>
+                      <InputLabel>Предмет</InputLabel>
+                      <Select
+                        value={selectedSubject}
+                        label="Предмет"
+                        onChange={(e) => setSelectedSubject(e.target.value)}
+                        disabled={loading || !selectedClass}
+                      >
+                        <MenuItem value="">
+                          <em>Выберите предмет</em>
+                        </MenuItem>
+                        {getAvailableSubjects().map((subject) => (
+                          <MenuItem key={subject.id} value={subject.name}>
+                            {subject.name}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <IconButton onClick={handlePrevMonth} disabled={loading}>
+                        <ArrowLeft />
+                      </IconButton>
+                      <Typography variant="h6" sx={{ mx: 2 }}>
+                        {MONTHS[currentMonth]} {currentYear}
+                      </Typography>
+                      <IconButton onClick={handleNextMonth} disabled={loading}>
+                        <ArrowRight />
+                      </IconButton>
+                    </Box>
+                  </Grid>
+                </Grid>
+
+                {selectedClass && selectedSubject && (
+                  <TableContainer sx={{ maxHeight: 'calc(100vh - 300px)', overflowY: 'auto' }}>
+                    <Table stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ minWidth: 200, position: 'sticky', left: 0, zIndex: 3, bgcolor: 'background.paper' }}>
+                            Ученик
+                          </TableCell>
+                          {getDatesInMonth().map(date => (
                             <TableCell 
                               key={date.toISOString()} 
-                              align="center" 
-                              onClick={() => !isEditing && handleCellClick(student.id, date)}
+                              align="center"
                               sx={{ 
-                                cursor: 'pointer',
+                                minWidth: 50,
                                 bgcolor: date.getDay() === 0 || date.getDay() === 6 
                                   ? 'rgba(0, 0, 0, 0.04)' 
-                                  : 'inherit',
-                                '&:hover': {
-                                  bgcolor: 'rgba(0, 0, 0, 0.08)'
-                                }
+                                  : 'inherit'
                               }}
                             >
-                              {isEditing ? (
-                                <Select
-                                  autoFocus
-                                  variant="standard"
-                                  value={editingCell.value}
-                                  onChange={(e) => {
-                                    setEditingCell({
-                                      ...editingCell,
-                                      value: e.target.value
-                                    });
-                                  }}
-                                  onBlur={handleSaveGrade}
-                                  onKeyDown={handleCellKeyDown}
-                                  sx={{ width: 50, minWidth: 50 }}
-                                  MenuProps={{
-                                    PaperProps: {
-                                      style: {
-                                        maxHeight: 200
-                                      }
+                              <Tooltip title={date.toLocaleDateString('ru-RU', { weekday: 'short' })}>
+                                <Typography variant="body2">{date.getDate()}</Typography>
+                              </Tooltip>
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {students.map(student => (
+                          <TableRow key={student.id}>
+                            <TableCell 
+                              sx={{ 
+                                position: 'sticky', 
+                                left: 0, 
+                                zIndex: 2,
+                                bgcolor: 'background.paper'
+                              }}
+                            >
+                              {student.name}
+                            </TableCell>
+                            {getDatesInMonth().map(date => {
+                              const grade = getGradeForStudentAndDate(student.id, date);
+                              const isEditing = editingCell && 
+                                              editingCell.studentId === student.id && 
+                                              editingCell.date === date.toISOString().split('T')[0];
+                              
+                              return (
+                                <TableCell 
+                                  key={date.toISOString()} 
+                                  align="center" 
+                                  onClick={() => !isEditing && handleCellClick(student.id, date)}
+                                  sx={{ 
+                                    cursor: 'pointer',
+                                    bgcolor: date.getDay() === 0 || date.getDay() === 6 
+                                      ? 'rgba(0, 0, 0, 0.04)' 
+                                      : 'inherit',
+                                    '&:hover': {
+                                      bgcolor: 'rgba(0, 0, 0, 0.08)'
                                     }
                                   }}
                                 >
-                                  <MenuItem value="">
-                                    <em>-</em>
-                                  </MenuItem>
-                                  {[1, 2, 3, 4, 5].map((value) => (
-                                    <MenuItem key={value} value={value}>
-                                      {value}
-                                    </MenuItem>
-                                  ))}
-                                  <Divider />
-                                  <MenuItem value="Н">Н</MenuItem>
-                                  <MenuItem value="У">У</MenuItem>
-                                  <MenuItem value="О">О</MenuItem>
-                                </Select>
-                              ) : grade ? (
-                                <Tooltip 
-                                  title={
-                                    grade.trimesterId 
-                                      ? `${getTrimesterName(grade.trimesterId)}${grade.comment ? `: ${grade.comment}` : ''}`
-                                      : grade.comment || ''
-                                  }
-                                >
-                                  <Typography 
-                                    sx={{ 
-                                      fontWeight: 'bold',
-                                      color: getGradeColor(grade.value)
-                                    }}
-                                  >
-                                    {grade.value}
-                                  </Typography>
-                                </Tooltip>
-                              ) : null}
-                            </TableCell>
-                          );
-                        })}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-
-            {!selectedClass && (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                Выберите класс и предмет для отображения таблицы оценок
-              </Alert>
-            )}
-          </Box>
-        </TabPanel>
-
-        <TabPanel value={gradesTabValue} index={1}>
-          <Box sx={{ p: 2 }}>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
-              <FormControl sx={{ minWidth: 120 }}>
-                <InputLabel>Класс</InputLabel>
-                <Select
-                  value={selectedClass}
-                  label="Класс"
-                  onChange={(e) => setSelectedClass(e.target.value)}
-                  disabled={loading}
-                >
-                  <MenuItem value="">
-                    <em>Выберите класс</em>
-                  </MenuItem>
-                  {classes.map((cls) => (
-                    <MenuItem key={cls.id} value={cls.id}>
-                      {cls.grade}-{cls.letter}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Stack>
-
-            {selectedClass && (
-              <TableContainer>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Ученик</TableCell>
-                      {getAvailableSubjects().map(subject => (
-                        <TableCell key={subject.name}>{subject.name}</TableCell>
-                      ))}
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {students.map(student => (
-                      <TableRow key={student.id}>
-                        <TableCell>{student.name}</TableCell>
-                        {getAvailableSubjects().map(subject => {
-                          const studentFinalGrades = finalGrades.filter(
-                            g => g.studentId === Number(student.id) && g.subject === subject.name
-                          );
-                          
-                          return (
-                            <TableCell key={subject.name}>
-                              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                {['TRIMESTER1', 'TRIMESTER2', 'TRIMESTER3', 'YEAR', 'ATTESTATION'].map(type => {
-                                  const grade = studentFinalGrades.find(g => g.gradeType === type);
-                                  return grade ? (
-                                    <Chip
-                                      key={type}
-                                      label={`${gradeTypeLabels[type]}: ${grade.value}`}
-                                      size="small"
-                                      sx={{
-                                        bgcolor: getGradeColor(grade.value),
-                                        color: 'white'
+                                  {isEditing ? (
+                                    <Select
+                                      autoFocus
+                                      variant="standard"
+                                      value={editingCell.value}
+                                      onChange={(e) => {
+                                        setEditingCell({
+                                          ...editingCell,
+                                          value: e.target.value
+                                        });
                                       }}
-                                    />
-                                  ) : null;
-                                })}
-                                <Box sx={{ display: 'flex', gap: 1 }}>
-                                  <Button
-                                    variant="outlined"
-                                    size="small"
-                                    onClick={() => handleOpenFinalGradeDialog(
-                                      { 
-                                        id: student.id, 
-                                        grade: classes.find(c => c.id === selectedClass)?.grade || 0 
-                                      },
-                                      subject.name
-                                    )}
-                                  >
-                                    Выставить вручную
-                                  </Button>
-                                  <Button
-                                    variant="outlined"
-                                    size="small"
-                                    color="secondary"
-                                    startIcon={<AutoAwesome />}
-                                    onClick={() => handleOpenAutoFinalGradeDialog(
-                                      { 
-                                        id: student.id, 
-                                        grade: classes.find(c => c.id === selectedClass)?.grade || 0 
-                                      },
-                                      subject.name
-                                    )}
-                                  >
-                                    Авто
-                                  </Button>
-                                </Box>
-                              </Box>
-                            </TableCell>
-                          );
-                        })}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </Box>
+                                      onBlur={handleSaveGrade}
+                                      onKeyDown={handleCellKeyDown}
+                                      sx={{ width: 50, minWidth: 50 }}
+                                      MenuProps={{
+                                        PaperProps: {
+                                          style: {
+                                            maxHeight: 200
+                                          }
+                                        }
+                                      }}
+                                    >
+                                      <MenuItem value="">
+                                        <em>-</em>
+                                      </MenuItem>
+                                      {[1, 2, 3, 4, 5].map((value) => (
+                                        <MenuItem key={value} value={value}>
+                                          {value}
+                                        </MenuItem>
+                                      ))}
+                                      <Divider />
+                                      <MenuItem value="Н">Н</MenuItem>
+                                      <MenuItem value="У">У</MenuItem>
+                                      <MenuItem value="О">О</MenuItem>
+                                    </Select>
+                                  ) : grade ? (
+                                    <Tooltip 
+                                      title={
+                                        grade.trimesterId 
+                                          ? `${getTrimesterName(grade.trimesterId)}${grade.comment ? `: ${grade.comment}` : ''}`
+                                          : grade.comment || ''
+                                      }
+                                    >
+                                      <Chip
+                                        label={grade.value}
+                                        size="small"
+                                        sx={{
+                                          fontWeight: 'bold',
+                                          bgcolor: getGradeColor(grade.value),
+                                          color: 'white',
+                                          minWidth: 32,
+                                          height: 24
+                                        }}
+                                      />
+                                    </Tooltip>
+                                  ) : null}
+                                </TableCell>
+                              );
+                            })}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+
+                {!selectedClass && (
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    Выберите класс и предмет для отображения таблицы оценок
+                  </Alert>
+                )}
+              </Box>
+            </TabPanel>
+
+            <TabPanel value={gradesTabValue} index={1}>
+              <Box sx={{ p: 2 }}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+                  <FormControl sx={{ minWidth: 120 }}>
+                    <InputLabel>Класс</InputLabel>
+                    <Select
+                      value={selectedClass}
+                      label="Класс"
+                      onChange={(e) => setSelectedClass(e.target.value)}
+                      disabled={loading}
+                    >
+                      <MenuItem value="">
+                        <em>Выберите класс</em>
+                      </MenuItem>
+                      {classes.map((cls) => (
+                        <MenuItem key={cls.id} value={cls.id}>
+                          {cls.grade}-{cls.letter}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Stack>
+
+                {selectedClass && (
+                  <TableContainer>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Ученик</TableCell>
+                          {getAvailableSubjects().map(subject => (
+                            <TableCell key={subject.name}>{subject.name}</TableCell>
+                          ))}
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {students.map(student => (
+                          <TableRow key={student.id}>
+                            <TableCell>{student.name}</TableCell>
+                            {getAvailableSubjects().map(subject => {
+                              const studentFinalGrades = finalGrades.filter(
+                                g => g.studentId === Number(student.id) && g.subject === subject.name
+                              );
+                              
+                              return (
+                                <TableCell key={subject.name}>
+                                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                    {['TRIMESTER1', 'TRIMESTER2', 'TRIMESTER3', 'YEAR', 'ATTESTATION'].map(type => {
+                                      const grade = studentFinalGrades.find(g => g.gradeType === type);
+                                      return grade ? (
+                                        <Chip
+                                          key={type}
+                                          label={`${gradeTypeLabels[type]}: ${grade.value}`}
+                                          size="small"
+                                          sx={{
+                                            bgcolor: getGradeColor(grade.value),
+                                            color: 'white'
+                                          }}
+                                        />
+                                      ) : null;
+                                    })}
+                                    <Box sx={{ display: 'flex', gap: 1 }}>
+                                      <Button
+                                        variant="outlined"
+                                        size="small"
+                                        onClick={() => handleOpenFinalGradeDialog(
+                                          { 
+                                            id: student.id, 
+                                            grade: classes.find(c => c.id === selectedClass)?.grade || 0 
+                                          },
+                                          subject.name
+                                        )}
+                                      >
+                                        Выставить вручную
+                                      </Button>
+                                      <Button
+                                        variant="outlined"
+                                        size="small"
+                                        color="secondary"
+                                        startIcon={<AutoAwesome />}
+                                        onClick={() => handleOpenAutoFinalGradeDialog(
+                                          { 
+                                            id: student.id, 
+                                            grade: classes.find(c => c.id === selectedClass)?.grade || 0 
+                                          },
+                                          subject.name
+                                        )}
+                                      >
+                                        Авто
+                                      </Button>
+                                    </Box>
+                                  </Box>
+                                </TableCell>
+                              );
+                            })}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </Box>
+            </TabPanel>
+          </Paper>
         </TabPanel>
-      </Paper>
 
-      <GradeDialog
-        grade={selectedGrade}
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-      />
+        <TabPanel value={mainTabValue} index={1}>
+          <Paper sx={{ mb: 3 }}>
+            <ScheduleTab onScheduleLoad={handleScheduleLoad} />
+          </Paper>
+        </TabPanel>
 
-      <DeleteConfirmDialog
-        grade={gradeToDelete}
-        open={deleteDialogOpen}
-        onClose={() => setDeleteDialogOpen(false)}
-        onConfirm={handleDeleteConfirm}
-      />
+        <GradeDialog
+          grade={selectedGrade}
+          open={dialogOpen}
+          onClose={() => setDialogOpen(false)}
+        />
 
-      <FinalGradeEditor
-        open={finalGradeDialogOpen}
-        onClose={() => setFinalGradeDialogOpen(false)}
-        onGradeAdded={handleFinalGradeAdded}
-        studentId={selectedStudent}
-        subject={selectedFinalGradeSubject}
-        studentGrade={5}
-        currentYear={currentYear}
-      />
+        <DeleteConfirmDialog
+          grade={gradeToDelete}
+          open={deleteDialogOpen}
+          onClose={() => setDeleteDialogOpen(false)}
+          onConfirm={handleDeleteConfirm}
+        />
 
-      <AutoFinalGradeCalculator
-        open={autoFinalGradeDialogOpen}
-        onClose={() => setAutoFinalGradeDialogOpen(false)}
-        onGradesAdded={handleFinalGradesAdded}
-        studentId={selectedStudent}
-        subject={selectedFinalGradeSubject}
-        studentGrade={5}
-        currentYear={currentYear}
-        studentGrades={selectedStudentGrades}
-        existingFinalGrades={finalGrades.filter(g => g.studentId === Number(selectedStudent))}
-      />
+        <FinalGradeEditor
+          open={finalGradeDialogOpen}
+          onClose={() => setFinalGradeDialogOpen(false)}
+          onGradeAdded={handleFinalGradeAdded}
+          studentId={selectedStudent}
+          subject={selectedFinalGradeSubject}
+          studentGrade={5}
+          currentYear={currentYear}
+        />
+
+        <AutoFinalGradeCalculator
+          open={autoFinalGradeDialogOpen}
+          onClose={() => setAutoFinalGradeDialogOpen(false)}
+          onGradesAdded={handleFinalGradesAdded}
+          studentId={selectedStudent}
+          subject={selectedFinalGradeSubject}
+          studentGrade={5}
+          currentYear={currentYear}
+          studentGrades={selectedStudentGrades}
+          existingFinalGrades={finalGrades.filter(g => g.studentId === Number(selectedStudent))}
+        />
+      </Box>
     </Box>
   );
 };
