@@ -23,6 +23,11 @@ module.exports = (sequelize) => {
         max: 6,
       },
     },
+    date: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+      comment: 'Конкретная дата занятия, если расписание привязано к дате, а не дню недели'
+    },
     lessonNumber: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -57,6 +62,11 @@ module.exports = (sequelize) => {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false,
+    },
+    classroom: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: 'Номер кабинета, в котором проходит урок'
     },
   });
 

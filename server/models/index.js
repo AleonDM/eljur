@@ -1,13 +1,11 @@
 const { Sequelize } = require('sequelize');
 const path = require('path');
 const fs = require('fs');
+const config = require('../config/database.js');
 
 // Инициализация Sequelize с SQLite
-const sequelize = new Sequelize({
-  dialect: 'sqlite',
-  storage: path.join(__dirname, '..', 'database.sqlite'),
-  logging: false
-});
+const env = process.env.NODE_ENV || 'development';
+const sequelize = new Sequelize(config[env]);
 
 const db = {};
 
@@ -37,12 +35,24 @@ const initDatabase = async () => {
     await sequelize.authenticate();
     console.log('Соединение с базой данных установлено.');
     
-    await sequelize.sync({ alter: false });
-    console.log('Модели синхронизированы с базой данных.');
+    // Используем alter: true для обновления существующих таблиц
+    console.log('Синхронизация моделей с базой данных...');
+    await sequelize.sync({ alter: true });
+    console.log('Модели успешно синхронизированы с базой данных.');
     
     return db;
   } catch (error) {
-    console.error('Ошибка при инициализации базы данных:', error);
+    console.error('Ошибка при инициализации базы данных:');
+    console.error(error.name + ': ' + error.message);
+    
+    if (error.parent) {
+      console.error('Детали ошибки:', error.parent.message);
+    }
+    
+    if (error.sql) {
+      console.error('SQL запрос, вызвавший ошибку:', error.sql);
+    }
+    
     throw error;
   }
 };

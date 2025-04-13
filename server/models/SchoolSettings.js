@@ -48,6 +48,16 @@ module.exports = (sequelize) => {
         is: /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/
       },
       comment: 'Время начала второй смены'
+    },
+    gradeRoundingThreshold: {
+      type: DataTypes.FLOAT,
+      allowNull: false,
+      defaultValue: 0.5,
+      validate: {
+        min: 0.01,
+        max: 0.99
+      },
+      comment: 'Порог округления оценок (например, 0.6 означает, что 3.6 округляется до 4)'
     }
   });
 

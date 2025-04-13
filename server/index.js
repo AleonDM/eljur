@@ -1,13 +1,15 @@
 const express = require('express');
 const http = require('http');
-const WebSocket = require('ws');
+const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
-const { initDatabase } = require('./models/index.js');
+const { initDatabase, sequelize } = require('./models');
+const { execSync } = require('child_process');
 
 // Импортируем маршруты
 const gradesRouter = require('./routes/grades.js');
@@ -27,6 +29,94 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Создаем HTTP-сервер на основе Express
+const server = http.createServer(app);
+
+// Настройка CORS для разных окружений
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production'
+    ? ['https://eljur-client.netlify.app', 'https://eljur-app.netlify.app']
+    : '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
+};
+
+// Инициализируем Socket.IO
+const io = new Server(server, {
+  cors: corsOptions
+});
+
+// Хранилище для активных соединений
+const activeConnections = new Map();
+
+// Middleware для аутентификации пользователя в Socket.IO
+io.use((socket, next) => {
+  try {
+    const token = socket.handshake.auth.token || 
+                  socket.handshake.query.token;
+    
+    if (!token) {
+      return next(new Error('Токен не предоставлен'));
+    }
+    
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = decoded.userId;
+    socket.userRole = decoded.role;
+    next();
+  } catch (error) {
+    next(new Error('Ошибка аутентификации'));
+  }
+});
+
+// Обработка подключений Socket.IO
+io.on('connection', (socket) => {
+  activeConnections.set(socket.userId, socket);
+  
+  // Отправляем информацию о подключении самому пользователю
+  socket.emit('connect_status', { 
+    connected: true, 
+    userId: socket.userId,
+    userRole: socket.userRole
+  });
+  
+  // Обработка отправки сообщения
+  socket.on('send_message', (data) => {
+    // Обработка сообщения происходит в роутере
+  });
+  
+  // Обработка изменения статуса "прочитано"
+  socket.on('mark_messages_read', async (data) => {
+    try {
+      const { fromUserId } = data;
+      if (!fromUserId) return;
+      
+      // Обновление статуса происходит в роутере
+    } catch (error) {
+      // Ошибка обработана
+    }
+  });
+  
+  // Обработка отключения
+  socket.on('disconnect', () => {
+    activeConnections.delete(socket.userId);
+  });
+});
+
+// Глобальная функция для отправки сообщений через Socket.IO
+global.sendSocketMessage = (userId, data) => {
+  try {
+    const userSocket = activeConnections.get(parseInt(userId));
+    if (userSocket) {
+      userSocket.emit('message', data);
+      return true;
+    } else {
+      return false;
+    }
+  } catch (error) {
+    return false;
+  }
+};
+
 // Определяем пути для загрузок
 const uploadsDir = path.join(__dirname, 'uploads');
 const avatarsDir = path.join(uploadsDir, 'avatars');
@@ -34,7 +124,7 @@ const avatarsDir = path.join(uploadsDir, 'avatars');
 let User, Class, Grade, Subject, Homework, Schedule, SchoolSettings, Message;
 
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Создаем директории для загрузок
@@ -43,53 +133,34 @@ const createUploadDirs = async () => {
     // Проверяем существование директории uploads
     try {
       await fs.access(uploadsDir);
-      console.log('Директория uploads уже существует');
     } catch (err) {
       await fs.mkdir(uploadsDir, { recursive: true });
-      console.log('Директория uploads создана');
     }
 
     // Проверяем существование директории avatars
     try {
       await fs.access(avatarsDir);
-      console.log('Директория avatars уже существует');
     } catch (err) {
       await fs.mkdir(avatarsDir, { recursive: true });
-      console.log('Директория avatars создана');
     }
 
-    // Выводим содержимое директории с аватарами
+    // Проверяем содержимое директории с аватарами
     try {
-      const avatarFiles = await fs.readdir(avatarsDir);
-      console.log('Содержимое директории аватаров:');
-      if (avatarFiles.length === 0) {
-        console.log('  - Директория пуста');
-      } else {
-        avatarFiles.forEach(file => {
-          console.log(`  - ${file}`);
-        });
-      }
+      await fs.readdir(avatarsDir);
     } catch (err) {
-      console.error('Ошибка при чтении директории аватаров:', err.message);
+      // Обработка ошибки
     }
-
-    console.log('Пути к директориям:');
-    console.log('- Uploads dir:', uploadsDir);
-    console.log('- Avatars dir:', avatarsDir);
   } catch (error) {
-    console.error('Ошибка при создании директорий для загрузок:', error);
+    // Обработка ошибки
   }
 };
 
 // Настраиваем обработку статических файлов
 app.use('/uploads', (req, res, next) => {
-  console.log('Запрос к статическому файлу:', req.url);
-  console.log('Полный путь к файлу:', path.join(uploadsDir, req.url));
-  
   // Проверяем, существует ли файл
   fs.access(path.join(uploadsDir, req.url))
-    .then(() => console.log('Файл существует'))
-    .catch(err => console.error('Файл не существует:', err.message));
+    .then(() => {})
+    .catch(() => {});
   
   next();
 }, express.static(path.join(__dirname, 'uploads'), {
@@ -100,8 +171,7 @@ app.use('/uploads', (req, res, next) => {
   }
 }));
 
-// Добавляем простое обслуживание статических файлов - максимально прямой путь
-console.log('Настраиваем статические файлы, путь:', uploadsDir);
+// Добавляем простое обслуживание статических файлов
 app.use('/uploads', express.static(uploadsDir));
 
 // Подключаем маршруты
@@ -115,6 +185,26 @@ app.use('/api/final-grades', finalGradesRouter);
 app.use('/api/subjects', subjectsRouter);
 app.use('/api/classes', classesRouter);
 app.use('/api/trimesters', trimestersRouter);
+
+// Перенаправляем запросы на /api/grades
+app.use('/api/grades', require('./routes/grades.js'));
+
+// Перенаправляем запросы на /api/final-grades
+app.use('/api/final-grades', require('./routes/finalGrades.js'));
+
+// Перенаправляем запросы на /api/trimesters
+app.use('/api/trimesters', require('./routes/trimesters.js'));
+
+// Маршрут для получения рейтинга класса
+app.get('/api/ratings/class/:classId', async (req, res) => {
+  try {
+    const gradesHandler = require('./routes/grades.js');
+    await gradesHandler.getClassRatings(req, res);
+  } catch (error) {
+    console.error('Ошибка при обработке запроса рейтинга:', error);
+    res.status(500).json({ message: 'Ошибка сервера' });
+  }
+});
 
 // Тестовый маршрут
 app.get('/', (req, res) => {
@@ -163,7 +253,6 @@ const initializeDefaultUsers = async () => {
         name: process.env.ADMIN_NAME,
         role: 'admin'
       });
-      console.log('Создан пользователь администратор');
     }
 
     // Проверяем существование директора
@@ -175,10 +264,8 @@ const initializeDefaultUsers = async () => {
         name: process.env.DIRECTOR_NAME,
         role: 'director'
       });
-      console.log('Создан пользователь директор');
     }
   } catch (error) {
-    console.error('Ошибка при создании пользователей:', error);
   }
 };
 
@@ -565,7 +652,6 @@ app.get('/create-test-file', async (req, res) => {
     const testFilePath = path.join(avatarsDir, 'test-file.txt');
     await fs.writeFile(testFilePath, 'Это тестовый файл для проверки статических файлов');
     
-    console.log('Тестовый файл создан:', testFilePath);
     res.send({
       success: true, 
       message: 'Тестовый файл создан', 
@@ -573,7 +659,6 @@ app.get('/create-test-file', async (req, res) => {
       url: '/uploads/avatars/test-file.txt'
     });
   } catch (err) {
-    console.error('Ошибка при создании тестового файла:', err);
     res.status(500).send({ success: false, error: err.message });
   }
 });
@@ -588,8 +673,7 @@ app.get('/check-file', async (req, res) => {
 
     // Полный путь к файлу
     const fullPath = path.join(__dirname, filePath.startsWith('/') ? filePath.substring(1) : filePath);
-    console.log('Проверяем доступ к файлу:', fullPath);
-
+    
     try {
       // Проверяем, существует ли файл
       await fs.access(fullPath);
@@ -609,7 +693,6 @@ app.get('/check-file', async (req, res) => {
         }
       });
     } catch (err) {
-      console.error('Ошибка при проверке файла:', err);
       res.json({
         exists: false,
         path: fullPath,
@@ -617,7 +700,6 @@ app.get('/check-file', async (req, res) => {
       });
     }
   } catch (err) {
-    console.error('Ошибка в маршруте проверки файла:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -628,10 +710,6 @@ app.get('/uploads/avatars/:filename', async (req, res) => {
     const filename = req.params.filename;
     const filePath = path.join(avatarsDir, filename);
     const defaultAvatarPath = path.join(avatarsDir, 'default.png');
-    
-    console.log('====== ЗАПРОС К АВАТАРУ =====');
-    console.log('Запрос к аватару:', filename);
-    console.log('Полный путь к файлу:', filePath);
     
     // Проверяем существование файла
     try {
@@ -645,12 +723,8 @@ app.get('/uploads/avatars/:filename', async (req, res) => {
         contentType = 'image/gif';
       }
       
-      console.log('Тип содержимого:', contentType);
-      
       // Получаем информацию о файле
       const stats = await fs.stat(filePath);
-      console.log('Размер файла:', stats.size, 'байт');
-      console.log('Это файл:', stats.isFile());
       
       // Устанавливаем заголовки
       res.setHeader('Content-Type', contentType);
@@ -658,40 +732,23 @@ app.get('/uploads/avatars/:filename', async (req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
       
-      console.log('Файл аватара найден, отправляем');
-      console.log('=============================');
-      
       // Отправляем файл
       res.sendFile(filePath);
     } catch (err) {
-      console.error('Файл аватара не найден:', err.message);
-      console.error('Пробуем отдать аватар по умолчанию...');
-      
       // Пробуем отдать дефолтный аватар
       try {
         await fs.access(defaultAvatarPath);
-        console.log('Отдаем аватар по умолчанию');
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         return res.sendFile(defaultAvatarPath);
       } catch (defaultErr) {
-        console.error('Аватар по умолчанию тоже не найден:', defaultErr.message);
+        // Аватар по умолчанию не найден
       }
       
-      console.error('Проверяем содержимое директории:');
-      try {
-        const files = await fs.readdir(avatarsDir);
-        console.error('Содержимое директории аватаров:', files);
-      } catch (dirErr) {
-        console.error('Не удалось прочитать директорию:', dirErr.message);
-      }
-      
-      console.error('=============================');
       res.status(404).send('Файл не найден');
     }
   } catch (err) {
-    console.error('Ошибка при отдаче аватара:', err);
     res.status(500).send('Ошибка сервера');
   }
 });
@@ -704,7 +761,6 @@ const initializeTrimesters = async () => {
     // Проверяем, есть ли уже триместры в базе данных
     const existingTrimesters = await Trimester.count();
     if (existingTrimesters > 0) {
-      console.log('Триместры уже инициализированы, пропускаем...');
       return;
     }
     
@@ -742,10 +798,8 @@ const initializeTrimesters = async () => {
     
     // Создаем триместры в базе данных
     await Trimester.bulkCreate(trimesters);
-    
-    console.log('Триместры успешно инициализированы');
   } catch (error) {
-    console.error('Ошибка при инициализации триместров:', error);
+    // Обработка ошибки
   }
 };
 
@@ -757,11 +811,9 @@ const createTestAvatar = async () => {
     // Проверяем существование тестового аватара
     try {
       await fs.access(defaultAvatarPath);
-      console.log('Аватар по умолчанию уже существует:', defaultAvatarPath);
       return;
     } catch (err) {
       // Файл не существует, создаем его
-      console.log('Создаем аватар по умолчанию:', defaultAvatarPath);
     }
     
     // Создаем простой PNG-файл с синим фоном
@@ -780,122 +832,64 @@ const createTestAvatar = async () => {
     );
     
     await fs.writeFile(defaultAvatarPath, pngData);
-    console.log('Аватар по умолчанию успешно создан');
   } catch (err) {
-    console.error('Ошибка при создании аватара по умолчанию:', err);
+    // Обработка ошибки
+  }
+};
+
+// Функция для инициализации тестовых данных
+const initTestData = async () => {
+  try {
+    // Создаем директории для загрузок
+    await createUploadDirs();
+    
+    // Инициализируем триместры
+    await initializeTrimesters();
+    
+    // Инициализируем начальных пользователей
+    await initializeDefaultUsers();
+  } catch (error) {
+    // Обработка ошибки
   }
 };
 
 // Функция запуска сервера
-const start = async () => {
+const startServer = async () => {
   try {
-    // Инициализируем базу данных
+    // Запускаем миграции перед запуском сервера
+    try {
+      console.log('Применяем миграции...');
+      execSync('npx sequelize-cli db:migrate', { stdio: 'inherit' });
+      console.log('Миграции успешно применены');
+    } catch (migrationError) {
+      console.error('Предупреждение: Ошибка при применении миграций.');
+      console.error('Продолжаем запуск сервера без применения миграций.');
+      // Продолжаем работу даже при ошибке миграций
+    }
+
+    // Инициализация базы данных (без принудительного пересоздания таблиц)
+    console.log('Инициализация базы данных...');
     await initDatabase();
     console.log('База данных инициализирована');
-
-    // Создаем директории для загрузок
-    await createUploadDirs();
     
-    // Создаем тестовый аватар
+    // Создание папки для аватаров, если её нет
+    if (!fsSync.existsSync(avatarsDir)) {
+      fsSync.mkdirSync(avatarsDir, { recursive: true });
+    }
+    
+    // Проверяем и создаём тестового аватара если его нет
     await createTestAvatar();
     
-    // Инициализируем триместры
-    await initializeTrimesters();
-
-    // Настраиваем middleware
-    app.use(cors({
-      origin: 'http://localhost:5173',
-      credentials: true,
-      exposedHeaders: ['Content-Disposition']
-    }));
-    app.use(express.json());
-
-    // Настраиваем заголовки для статических файлов
-    app.use((req, res, next) => {
-      res.header('Access-Control-Allow-Origin', 'http://localhost:5173');
-      res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-      res.header('Cross-Origin-Resource-Policy', 'cross-origin');
-      next();
-    });
-
-    // Настраиваем отдачу статических файлов
-    console.log('Настраиваем отдачу статических файлов, путь:', uploadsDir);
-    app.use('/uploads', (req, res, next) => {
-      console.log('Запрос к статическому файлу:', req.url);
-      next();
-    }, express.static(uploadsDir, {
-      setHeaders: (res, path) => {
-        if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
-          res.setHeader('Content-Type', path.endsWith('.png') ? 'image/png' : 'image/jpeg');
-        }
-      }
-    }));
-
-    // Подключаем маршруты
-    app.use('/api/auth', require('./routes/auth.js'));
-    app.use('/api/users', require('./routes/users.js'));
-    app.use('/api/grades', require('./routes/grades.js'));
-    app.use('/api/homework', require('./routes/homework.js'));
-    app.use('/api/schedule', require('./routes/schedule.js'));
-    app.use('/api/messages', require('./routes/messages.js'));
-    app.use('/api/final-grades', require('./routes/finalGrades.js'));
-    app.use('/api/subjects', require('./routes/subjects.js'));
-    app.use('/api/classes', require('./routes/classes.js'));
-    app.use('/api/trimesters', require('./routes/trimesters.js'));
-
-    // Инициализируем начальных пользователей
-    await initializeDefaultUsers();
-
-    // Создаем HTTP-сервер
-    const server = http.createServer(app);
-
-    // Настраиваем WebSocket-сервер
-    const wss = new WebSocket.Server({ server });
-    const clients = new Map();
-
-    wss.on('connection', (ws) => {
-      console.log('WebSocket подключение установлено');
-
-      ws.on('message', async (message) => {
-        try {
-          const data = JSON.parse(message);
-          
-          if (data.type === 'auth') {
-            const token = data.token;
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            const userId = decoded.userId;
-            
-            clients.set(userId, ws);
-            console.log(`Пользователь ${userId} авторизован в WebSocket`);
-          }
-        } catch (err) {
-          console.error('WebSocket ошибка:', err);
-          ws.close();
-        }
-      });
-    });
-
-    // Глобальная функция для отправки WebSocket-сообщений
-    global.sendWebSocketMessage = (userId, message) => {
-      const client = clients.get(userId);
-      if (client && client.readyState === WebSocket.OPEN) {
-        try {
-          client.send(JSON.stringify(message));
-        } catch (err) {
-          console.error(`Ошибка отправки WebSocket сообщения пользователю ${userId}:`, err);
-        }
-      }
-    };
-
-    // Запускаем сервер
+    // Инициализируем тестовые данные
+    await initTestData();
+    
     server.listen(PORT, () => {
       console.log(`Сервер запущен на порту ${PORT}`);
-      console.log('Путь к загрузкам:', uploadsDir);
     });
   } catch (error) {
-    console.error('Ошибка при запуске сервера:', error);
-    process.exit(1);
+    console.error('Критическая ошибка при запуске сервера:', error);
+    process.exit(1); // Завершаем процесс с ошибкой
   }
 };
 
-start(); 
+startServer(); 

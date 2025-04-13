@@ -177,9 +177,9 @@ router.post('/', auth, upload.single('file'), async (req, res) => {
       ]
     });
 
-    // Отправляем уведомление получателю через WebSocket
-    if (global.sendWebSocketMessage) {
-      global.sendWebSocketMessage(parseInt(toUserId), {
+    // Отправляем уведомление получателю через Socket.IO
+    if (global.sendSocketMessage) {
+      global.sendSocketMessage(parseInt(toUserId), {
         type: 'NEW_MESSAGE',
         message: messageWithSender
       });
@@ -205,6 +205,15 @@ router.put('/read/:fromUserId', auth, async (req, res) => {
         }
       }
     );
+    
+    // Уведомляем отправителя о прочтении сообщений через Socket.IO
+    if (global.sendSocketMessage) {
+      global.sendSocketMessage(parseInt(req.params.fromUserId), {
+        type: 'MESSAGES_READ',
+        fromUserId: req.user.userId
+      });
+    }
+    
     res.status(200).json({ message: 'Сообщения отмечены как прочитанные' });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -251,9 +260,9 @@ router.delete('/:messageId', auth, async (req, res) => {
 
     await message.destroy();
 
-    // Отправляем уведомление получателю через WebSocket
-    if (global.sendWebSocketMessage) {
-      global.sendWebSocketMessage(recipientId, {
+    // Отправляем уведомление получателю через Socket.IO
+    if (global.sendSocketMessage) {
+      global.sendSocketMessage(recipientId, {
         type: 'MESSAGE_DELETED',
         messageId: parseInt(req.params.messageId)
       });

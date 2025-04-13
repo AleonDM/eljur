@@ -90,32 +90,50 @@ router.put('/settings', auth, isDirector, async (req, res) => {
 // Получить расписание для класса
 router.get('/class/:classId', auth, async (req, res) => {
   try {
+    console.log('Запрос расписания для класса:', req.params.classId, 'с датой:', req.query.date);
     const classId = parseInt(req.params.classId, 10);
+    const { date } = req.query;
     
     if (isNaN(classId)) {
+      console.error('Некорректный ID класса:', req.params.classId);
       return res.status(400).json({ message: 'Некорректный ID класса' });
     }
     
     // Проверяем, существует ли класс
     const classExists = await Class.findByPk(classId);
     if (!classExists) {
+      console.error('Класс не найден, id:', classId);
       return res.status(404).json({ message: 'Класс не найден' });
     }
     
+    const whereCondition = { 
+      classId: classId,
+      isTemplate: false
+    };
+    
+    // Если указана дата, ищем расписание на эту дату
+    if (date) {
+      whereCondition.date = date;
+      console.log('Ищем расписание на дату:', date);
+    }
+    
+    console.log('Условия запроса:', JSON.stringify(whereCondition));
+    
     const schedule = await Schedule.findAll({
-      where: { 
-        classId: classId,
-        isTemplate: false
-      },
+      where: whereCondition,
       include: [{
         model: User,
         as: 'teacher',
         attributes: ['id', 'name'],
         required: false
+      }, {
+        model: Class,
+        attributes: ['id', 'grade', 'letter']
       }],
       order: [['dayOfWeek', 'ASC'], ['lessonNumber', 'ASC']]
     });
     
+    console.log(`Найдено ${schedule.length} записей расписания`);
     res.json(schedule);
   } catch (error) {
     console.error('Error fetching schedule:', error);
@@ -123,11 +141,113 @@ router.get('/class/:classId', auth, async (req, res) => {
   }
 });
 
+// Получить расписание на конкретную дату
+router.get('/date/:date', auth, async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { classId } = req.query;
+    
+    console.log('Запрос расписания на дату:', date, 'для класса:', classId);
+    
+    // Валидация даты
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      console.error('Некорректный формат даты:', date);
+      return res.status(400).json({ message: 'Некорректный формат даты. Используйте YYYY-MM-DD' });
+    }
+    
+    const whereCondition = { 
+      date: date,
+      isTemplate: false
+    };
+    
+    // Если указан класс, фильтруем по классу
+    if (classId) {
+      const classIdNumber = parseInt(classId, 10);
+      if (isNaN(classIdNumber)) {
+        console.error('Некорректный ID класса:', classId);
+        return res.status(400).json({ message: 'Некорректный ID класса' });
+      }
+      whereCondition.classId = classIdNumber;
+      console.log('Фильтрация по классу:', classIdNumber);
+    }
+    
+    console.log('Условия запроса:', JSON.stringify(whereCondition));
+    
+    const schedule = await Schedule.findAll({
+      where: whereCondition,
+      include: [{
+        model: User,
+        as: 'teacher',
+        attributes: ['id', 'name'],
+        required: false
+      }, {
+        model: Class,
+        attributes: ['id', 'grade', 'letter']
+      }],
+      order: [['lessonNumber', 'ASC']]
+    });
+    
+    console.log(`Найдено ${schedule.length} записей расписания на дату ${date}`);
+    res.json(schedule);
+  } catch (error) {
+    console.error('Error fetching schedule for date:', error);
+    res.status(500).json({ message: error.message || 'Ошибка сервера при получении расписания на дату' });
+  }
+});
+
+// Получение расписания для текущего учителя
+router.get('/teacher', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({ message: 'Доступ запрещен. Требуются права учителя.' });
+    }
+
+    const { date } = req.query;
+    
+    const whereCondition = { 
+      teacherId: req.user.userId 
+    };
+    
+    // Если указана дата, ищем расписание только на эту дату
+    if (date) {
+      whereCondition.date = date;
+    }
+
+    const schedule = await Schedule.findAll({
+      where: whereCondition,
+      include: [
+        {
+          model: Class,
+          attributes: ['id', 'grade', 'letter']
+        },
+        {
+          model: User,
+          as: 'teacher',
+          attributes: ['id', 'name']
+        }
+      ],
+      order: [
+        ['dayOfWeek', 'ASC'],
+        ['lessonNumber', 'ASC']
+      ]
+    });
+
+    res.json(schedule);
+  } catch (error) {
+    console.error('Ошибка при получении расписания учителя:', error);
+    res.status(500).json({ message: 'Ошибка сервера' });
+  }
+});
+
 // Создать или обновить расписание (только директор)
 router.post('/class/:classId', auth, isDirector, async (req, res) => {
   try {
     const classId = parseInt(req.params.classId, 10);
-    const { schedule } = req.body;
+    const { schedule, date } = req.body;
+
+    console.log(`Обновление расписания для класса ${classId}${date ? ` на дату ${date}` : ''}`);
+    console.log(`Получено ${schedule?.length || 0} записей расписания`);
 
     if (isNaN(classId)) {
       return res.status(400).json({ message: 'Некорректный ID класса' });
@@ -160,8 +280,8 @@ router.post('/class/:classId', auth, isDirector, async (req, res) => {
       }
 
       const times = calculateLessonTime(settings, lessonNumber);
-
-      return {
+      
+      const scheduleItem = {
         classId,
         dayOfWeek,
         lessonNumber,
@@ -170,15 +290,33 @@ router.post('/class/:classId', auth, isDirector, async (req, res) => {
         startTime: times.startTime,
         endTime: times.endTime,
         name: item.name || '',
-        isTemplate: false
+        isTemplate: false,
+        classroom: item.classroom || '',
+        date: item.date || date || null // Приоритет у даты из элемента расписания
       };
+      
+      console.log(`Подготовлен элемент расписания: урок ${lessonNumber}, день ${dayOfWeek}, предмет ${item.subject}, дата: ${scheduleItem.date || 'нет'}`);
+      
+      return scheduleItem;
     });
 
-    // Удаляем старое расписание для класса
-    await Schedule.destroy({ where: { classId } });
+    // Если указана дата, удаляем только расписание на эту дату
+    const whereCondition = { classId };
+    if (date) {
+      whereCondition.date = date;
+      console.log(`Удаление существующего расписания на дату ${date} для класса ${classId}`);
+    } else {
+      console.log(`Удаление всего существующего расписания для класса ${classId}`);
+    }
+
+    // Удаляем старое расписание для класса (по дате или полностью)
+    const deletedCount = await Schedule.destroy({ where: whereCondition });
+    console.log(`Удалено ${deletedCount} записей расписания`);
 
     // Создаем новое расписание
     const newSchedule = await Schedule.bulkCreate(validSchedule);
+    console.log(`Создано ${newSchedule.length} записей расписания`);
+    
     res.status(201).json(newSchedule);
   } catch (error) {
     console.error('Error creating schedule:', error);
