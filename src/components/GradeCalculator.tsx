@@ -117,39 +117,28 @@ const GradeCalculator: React.FC<GradeCalculatorProps> = ({ subjectGrades = [], o
     // Для строковых специальных оценок
     if (typeof value === 'string') {
       switch (value) {
-        case 'Н':
-          return '#9C27B0'; // Фиолетовый
-        case 'У':
-          return '#2196F3'; // Синий
-        case 'О':
-          return '#FF9800'; // Оранжевый
+        case 'Н': return '#9C27B0'; // Фиолетовый
+        case 'У': return '#2196F3'; // Синий
+        case 'О': return '#FF9800'; // Оранжевый
         default:
           // Преобразуем строковое число в числовое
-          if (!isNaN(Number(value))) {
-            return getGradeColor(Number(value));
-          }
+          if (!isNaN(Number(value))) return getGradeColor(Number(value));
           return 'inherit';
       }
     }
 
     // Для числовых оценок
-    // Если включено округление, используем округлённое значение для определения цвета
-    const gradeForColor = useRounding ? roundGrade(value, roundingThreshold) : value;
+    // Определяем какую оценку использовать для цвета
+    const colorValue = useRounding ? roundGrade(value, roundingThreshold) : Math.floor(value);
     
-    // Определяем цвет на основе числового значения (округлённого или нет)
-    switch (Math.floor(gradeForColor)) {
-      case 5:
-        return '#1B5E20'; // Темно-зеленый
-      case 4:
-        return '#4CAF50'; // Зеленый
-      case 3:
-        return '#FFC107'; // Желтый
-      case 2:
-        return '#F44336'; // Красный
-      case 1:
-        return '#B71C1C'; // Темно-красный
-      default:
-        return 'inherit';
+    // Выбираем цвет на основе значения
+    switch (colorValue) {
+      case 5: return '#1B5E20'; // Темно-зеленый
+      case 4: return '#4CAF50'; // Зеленый
+      case 3: return '#FFC107'; // Желтый
+      case 2: return '#F44336'; // Красный
+      case 1: return '#B71C1C'; // Темно-красный
+      default: return 'inherit';
     }
   };
 
@@ -184,13 +173,71 @@ const GradeCalculator: React.FC<GradeCalculatorProps> = ({ subjectGrades = [], o
             />
           }
           label={
-            <Tooltip title={`Порог округления: ${roundingThreshold}. Пример: 3.${Math.round(roundingThreshold * 100)} → 4`}>
+            <Tooltip title={`Порог округления: ${roundingThreshold}. Пример: ${Math.floor(4 + roundingThreshold)} → ${Math.floor(4 + roundingThreshold) + 1}`}>
               <Typography variant="body2">Округлять оценки</Typography>
             </Tooltip>
           }
         />
+        {useRounding && (
+          <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="body2">Порог округления:</Typography>
+            <TextField
+              type="number"
+              size="small"
+              value={roundingThreshold}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                if (!isNaN(value) && value >= 0.01 && value <= 0.99) {
+                  setRoundingThreshold(value);
+                }
+              }}
+              inputProps={{ 
+                min: 0.01, 
+                max: 0.99, 
+                step: 0.01,
+                style: { width: '70px' }
+              }}
+            />
+            <Tooltip title={`При таком пороге 4.${Math.floor(roundingThreshold * 100)} округлится до 5`}>
+              <Typography variant="body2" color="primary.main">
+                Пример: 4.{Math.floor(roundingThreshold * 100)} → 5
+              </Typography>
+            </Tooltip>
+          </Box>
+        )}
       </Box>
 
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="subtitle2" gutterBottom>
+          Быстрые оценки:
+        </Typography>
+        <Stack direction="row" spacing={1}>
+          {[4.5, 4.6, 4.7].map((testGrade) => (
+            <Chip 
+              key={testGrade}
+              label={testGrade}
+              color="primary"
+              variant="outlined"
+              onClick={() => {
+                setGrades([...grades, testGrade]);
+              }}
+              sx={{ cursor: 'pointer' }}
+            />
+          ))}
+          <Tooltip title="Добавить тестовую оценку, которая округлится до 5 с текущим порогом">
+            <Chip 
+              label={`4.${Math.floor(roundingThreshold * 100)}`}
+              color="success"
+              onClick={() => {
+                const testGrade = 4 + roundingThreshold;
+                setGrades([...grades, testGrade]);
+              }}
+              sx={{ cursor: 'pointer' }}
+            />
+          </Tooltip>
+        </Stack>
+      </Box>
+      
       <Box sx={{ display: 'flex', mb: 3 }}>
         <TextField
           label="Оценка"
@@ -200,7 +247,13 @@ const GradeCalculator: React.FC<GradeCalculatorProps> = ({ subjectGrades = [], o
           onChange={handleGradeChange}
           onKeyPress={handleKeyPress}
           sx={{ mr: 1, flexGrow: 1 }}
-          inputProps={{ inputMode: 'decimal', pattern: '[1-5]', max: 5, min: 1, step: 0.1 }}
+          inputProps={{ 
+            inputMode: 'decimal',
+            step: 0.1,
+            min: 1,
+            max: 5
+          }}
+          helperText="Например: 4.6"
         />
         <Button 
           variant="contained" 
