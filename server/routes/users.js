@@ -125,10 +125,10 @@ router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
       }
     }
 
-    // Обновляем путь к аватару в БД
-    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
-    console.log('Новый URL аватара:', avatarUrl);
-    await user.update({ avatarUrl });
+    // Обновляем путь к аватару в БД - храним относительный путь
+    const avatarRelativePath = `/uploads/avatars/${req.file.filename}`;
+    console.log('Новый URL аватара:', avatarRelativePath);
+    await user.update({ avatarUrl: avatarRelativePath });
 
     // Проверяем, создан ли файл и доступен ли он
     const fullPath = path.join(__dirname, '..', 'uploads', 'avatars', req.file.filename);
@@ -148,8 +148,13 @@ router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
     console.log('Аватар успешно обновлен');
     console.log('=========================================');
     
+    // Получаем API URL для ответа
+    const apiUrl = process.env.NODE_ENV === 'production' 
+        ? 'https://eljur-api.onrender.com' 
+        : 'http://localhost:3001';
+    
     res.json({ 
-      avatarUrl,
+      avatarUrl: avatarRelativePath, // Возвращаем относительный путь
       success: true 
     });
   } catch (error) {

@@ -142,9 +142,19 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
     if (!currentAvatarUrl || useInitials) return undefined;
     
     const serverUrl = import.meta.env.VITE_API_URL;
-    const url = currentAvatarUrl.startsWith('http') 
-      ? currentAvatarUrl 
-      : normalizeUrl(serverUrl, currentAvatarUrl);
+    let url;
+    
+    // Обрабатываем разные варианты путей
+    if (currentAvatarUrl.startsWith('http')) {
+      // Если полный URL, оставляем как есть
+      url = currentAvatarUrl;
+    } else if (currentAvatarUrl.startsWith('/uploads/')) {
+      // Если относительный путь от корня API
+      url = normalizeUrl(serverUrl, currentAvatarUrl);
+    } else {
+      // Другие случаи относительных путей
+      url = normalizeUrl(serverUrl, `/uploads/avatars/${currentAvatarUrl}`);
+    }
     
     // Добавляем метку времени для предотвращения кэширования
     const timestamp = Date.now();

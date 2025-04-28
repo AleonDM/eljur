@@ -711,6 +711,11 @@ app.get('/uploads/avatars/:filename', async (req, res) => {
     const filePath = path.join(avatarsDir, filename);
     const defaultAvatarPath = path.join(avatarsDir, 'default.png');
     
+    // Добавляем CORS заголовки для всех доменов
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    
     // Проверяем существование файла
     try {
       await fs.access(filePath);
