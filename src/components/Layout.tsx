@@ -118,9 +118,16 @@ const Layout = ({ children }: LayoutProps) => {
     }
     
     return (
-      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-        <EmojiEventsIcon sx={{ mr: 0.5, fontSize: '1.2rem' }} />
-        <Typography variant="body2" sx={{ mr: 1 }}>
+      <Box sx={{ 
+        display: 'flex', 
+        alignItems: 'center',
+        bgcolor: 'rgba(255, 255, 255, 0.1)',
+        borderRadius: 1,
+        p: 0.5,
+        pl: 1
+      }}>
+        <EmojiEventsIcon sx={{ mr: 0.5, fontSize: '1.2rem', color: '#FFD700' }} />
+        <Typography variant="body2" sx={{ mr: 1, fontWeight: 'medium' }}>
           Рейтинг: {studentRating.rank}/{studentRating.total}
         </Typography>
         <Chip 
@@ -142,7 +149,14 @@ const Layout = ({ children }: LayoutProps) => {
   const drawer = (
     <Box sx={{ width: 250 }} role="presentation" onClick={() => setDrawerOpen(false)}>
       {user?.role === 'student' && (
-        <Box sx={{ p: 2, borderBottom: '1px solid rgba(0, 0, 0, 0.12)' }}>
+        <Box sx={{ 
+          p: 2, 
+          borderBottom: '1px solid rgba(0, 0, 0, 0.12)',
+          bgcolor: mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'
+        }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Ваш рейтинг в классе:
+          </Typography>
           <RatingDisplay />
         </Box>
       )}
@@ -219,7 +233,14 @@ const Layout = ({ children }: LayoutProps) => {
             {isAuthenticated && (
               <>
                 {user?.role === 'student' && (
-                  <Box sx={{ mr: 3, display: { xs: 'none', sm: 'flex' } }}>
+                  <Box sx={{ 
+                    mr: 3, 
+                    display: { xs: 'none', sm: 'flex' },
+                    bgcolor: 'rgba(255, 255, 255, 0.1)',
+                    borderRadius: 1,
+                    p: 0.5,
+                    pl: 1
+                  }}>
                     <RatingDisplay />
                   </Box>
                 )}
