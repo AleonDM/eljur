@@ -76,7 +76,7 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
       console.log('Отправка запроса на загрузку аватара');
 
       // Отправляем файл на сервер
-      const response = await fetch('http://localhost:3001/api/users/avatar', {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/users/avatar`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -134,7 +134,7 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
   const getAvatarUrl = (): string | undefined => {
     if (!currentAvatarUrl || useInitials) return undefined;
     
-    const serverUrl = 'http://localhost:3001';
+    const serverUrl = import.meta.env.VITE_API_URL;
     const url = currentAvatarUrl.startsWith('http') 
       ? currentAvatarUrl 
       : `${serverUrl}${currentAvatarUrl}`;
