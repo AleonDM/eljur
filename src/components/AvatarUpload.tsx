@@ -42,6 +42,13 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
     setUseInitials(true);
   };
 
+  const normalizeUrl = (baseUrl: string, path: string): string => {
+    // Удаляем слеши в начале и конце
+    const cleanBase = baseUrl.replace(/^\/+|\/+$/g, '');
+    const cleanPath = path.replace(/^\/+|\/+$/g, '');
+    return `${cleanBase}/${cleanPath}`;
+  };
+
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -76,7 +83,7 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
       console.log('Отправка запроса на загрузку аватара');
 
       // Отправляем файл на сервер
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/users/avatar`, {
+      const response = await fetch(normalizeUrl(import.meta.env.VITE_API_URL, '/api/users/avatar'), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -137,7 +144,7 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
     const serverUrl = import.meta.env.VITE_API_URL;
     const url = currentAvatarUrl.startsWith('http') 
       ? currentAvatarUrl 
-      : `${serverUrl}${currentAvatarUrl}`;
+      : normalizeUrl(serverUrl, currentAvatarUrl);
     
     // Добавляем метку времени для предотвращения кэширования
     const timestamp = Date.now();
