@@ -114,7 +114,30 @@ const GradeCalculator: React.FC<GradeCalculatorProps> = ({ subjectGrades = [], o
   };
 
   const getGradeColor = (value: number | string) => {
-    switch (value) {
+    // Для строковых специальных оценок
+    if (typeof value === 'string') {
+      switch (value) {
+        case 'Н':
+          return '#9C27B0'; // Фиолетовый
+        case 'У':
+          return '#2196F3'; // Синий
+        case 'О':
+          return '#FF9800'; // Оранжевый
+        default:
+          // Преобразуем строковое число в числовое
+          if (!isNaN(Number(value))) {
+            return getGradeColor(Number(value));
+          }
+          return 'inherit';
+      }
+    }
+
+    // Для числовых оценок
+    // Если включено округление, используем округлённое значение для определения цвета
+    const gradeForColor = useRounding ? roundGrade(value, roundingThreshold) : value;
+    
+    // Определяем цвет на основе числового значения (округлённого или нет)
+    switch (Math.floor(gradeForColor)) {
       case 5:
         return '#1B5E20'; // Темно-зеленый
       case 4:
@@ -125,21 +148,13 @@ const GradeCalculator: React.FC<GradeCalculatorProps> = ({ subjectGrades = [], o
         return '#F44336'; // Красный
       case 1:
         return '#B71C1C'; // Темно-красный
-      case 'Н':
-        return '#9C27B0'; // Фиолетовый
-      case 'У':
-        return '#2196F3'; // Синий
-      case 'О':
-        return '#FF9800'; // Оранжевый
-      default: 
-        if (typeof value === 'string' && !isNaN(Number(value))) {
-          return getGradeColor(Number(value));
-        }
+      default:
         return 'inherit';
     }
   };
 
   const getAverageColor = () => {
+    // Возвращаем цвет на основе среднего балла (с учетом настроек округления)
     return getGradeColor(average);
   };
 
@@ -205,7 +220,7 @@ const GradeCalculator: React.FC<GradeCalculatorProps> = ({ subjectGrades = [], o
             {grades.map((grade, index) => (
               <Grid item key={index}>
                 <Chip
-                  label={grade}
+                  label={typeof grade === 'number' ? formatGrade(grade) : grade}
                   onDelete={() => handleRemoveGrade(index)}
                   deleteIcon={<DeleteIcon />}
                   sx={{ 
