@@ -102,7 +102,7 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
       console.log('Данные ответа:', data);
       
       // Проверяем, что URL аватара получен
-      if (!data.avatarUrl) {
+      if (!data.avatarUrl && !data.fullAvatarUrl) {
         throw new Error('Сервер не вернул URL аватара');
       }
       
@@ -110,10 +110,13 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
       console.log('Аватар успешно загружен');
       setUseInitials(false);
       
+      // Используем fullAvatarUrl, если он есть, иначе используем avatarUrl
+      const avatarUrl = data.fullAvatarUrl || data.avatarUrl;
+      
       // Вызываем callback с новым URL аватара
       if (onAvatarChange) {
-        console.log('Вызываем onAvatarChange с URL:', data.avatarUrl);
-        onAvatarChange(data.avatarUrl);
+        console.log('Вызываем onAvatarChange с URL:', avatarUrl);
+        onAvatarChange(avatarUrl);
       } else {
         console.warn('onAvatarChange не определен');
       }
@@ -141,7 +144,6 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
   const getAvatarUrl = (): string | undefined => {
     if (!currentAvatarUrl || useInitials) return undefined;
     
-    const serverUrl = import.meta.env.VITE_API_URL;
     let url;
     
     // Обрабатываем разные варианты путей
@@ -150,9 +152,11 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
       url = currentAvatarUrl;
     } else if (currentAvatarUrl.startsWith('/uploads/')) {
       // Если относительный путь от корня API
+      const serverUrl = import.meta.env.VITE_API_URL;
       url = normalizeUrl(serverUrl, currentAvatarUrl);
     } else {
       // Другие случаи относительных путей
+      const serverUrl = import.meta.env.VITE_API_URL;
       url = normalizeUrl(serverUrl, `/uploads/avatars/${currentAvatarUrl}`);
     }
     

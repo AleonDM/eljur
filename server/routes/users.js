@@ -153,8 +153,14 @@ router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
         ? 'https://eljur-api.onrender.com' 
         : 'http://localhost:3001';
     
+    // Формируем полный URL для ответа клиенту
+    const baseUrl = apiUrl.replace(/\/+$/, '');
+    const fullAvatarUrl = `${baseUrl}${avatarRelativePath}`;
+    console.log('Полный URL аватара:', fullAvatarUrl);
+    
     res.json({ 
-      avatarUrl: avatarRelativePath, // Возвращаем относительный путь
+      avatarUrl: avatarRelativePath,  // Оставляем относительный путь для обратной совместимости
+      fullAvatarUrl: fullAvatarUrl,   // Добавляем полный URL
       success: true 
     });
   } catch (error) {

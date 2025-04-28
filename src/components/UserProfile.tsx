@@ -17,6 +17,7 @@ const UserProfile: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const handleAvatarChange = (newAvatarUrl: string) => {
+    console.log('UserProfile: изменение аватара на', newAvatarUrl);
     if (user) {
       dispatch(setCredentials({
         user: { ...user, avatarUrl: newAvatarUrl },
