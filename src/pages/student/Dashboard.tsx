@@ -33,12 +33,10 @@ import {
   Info as InfoIcon,
   Calculate as CalculateIcon,
   ContentCopy as CopyIcon,
-  EmojiEvents as TrophyIcon,
 } from '@mui/icons-material';
 import { getGrades, getSubjects, getFinalGrades, Grade, Subject, FinalGrade } from '../../services/api';
 import GradeCalculator from '../../components/GradeCalculator';
 import FinalGrades from '../../components/FinalGrades';
-import StudentRating from '../../components/StudentRating';
 import {
   LineChart,
   Line,
@@ -302,7 +300,6 @@ const StudentDashboard = () => {
         <Tabs value={activeTab} onChange={handleTabChange}>
           <Tab label="Текущие оценки" />
           <Tab label="Итоговые оценки" />
-          <Tab label="Рейтинг" icon={<TrophyIcon />} iconPosition="start" />
         </Tabs>
       </Box>
 
@@ -476,10 +473,6 @@ const StudentDashboard = () => {
             year={selectedYear}
           />
         </Box>
-      </TabPanel>
-
-      <TabPanel value={activeTab} index={2}>
-        <StudentRating />
       </TabPanel>
 
       <GradeDialog
