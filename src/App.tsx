@@ -23,6 +23,7 @@ import { RootState } from './store';
 import PathTracker from './components/PathTracker';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import UserProfile from './components/UserProfile';
+import RatingPage from './pages/student/Rating';
 
 const AppContent = () => {
   const { mode, customColor } = useTheme();
@@ -131,6 +132,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute role="student">
             {user && <Messages currentUser={{ userId: Number(user.id), role: user.role }} />}
+          </ProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/student/rating"
+        element={
+          <ProtectedRoute role="student">
+            <RatingPage />
           </ProtectedRoute>
         }
       />
