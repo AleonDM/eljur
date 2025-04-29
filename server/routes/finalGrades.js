@@ -22,7 +22,7 @@ router.get('/student/:studentId', auth, async (req, res) => {
     });
     res.json(finalGrades);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Ошибка сервера' });
   }
 });
 
@@ -78,11 +78,7 @@ router.get('/class/:classId', auth, async (req, res) => {
 
     res.json(finalGrades);
   } catch (error) {
-    console.error('Error fetching final grades:', error);
-    res.status(500).json({ 
-      message: 'Ошибка при получении итоговых оценок',
-      error: error.message 
-    });
+    res.status(500).json({ message: 'Ошибка сервера' });
   }
 });
 
@@ -228,7 +224,7 @@ router.post('/', auth, isTeacher, async (req, res) => {
 
     res.status(201).json(gradeWithRelations);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Ошибка сервера' });
   }
 });
 
@@ -265,7 +261,7 @@ router.put('/:id', auth, isTeacher, async (req, res) => {
 
     res.json(updatedGrade);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Ошибка сервера' });
   }
 });
 

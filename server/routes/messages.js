@@ -1,6 +1,6 @@
 const express = require('express');
 const { auth } = require('../middleware/auth.js');
-const { Message, User } = require('../models/index.js');
+const { Message, User, Sequelize } = require('../models/index.js');
 const { Op } = require('sequelize');
 const multer = require('multer');
 const path = require('path');
@@ -38,19 +38,32 @@ const upload = multer({
   }
 });
 
-// Получить список сообщений с пользователем
-router.get('/conversation/:userId', auth, async (req, res) => {
+// Получить сообщения между текущим пользователем и другим пользователем
+router.get('/:userId', auth, async (req, res) => {
   try {
+    const currentUserId = req.user.userId;
+    const otherUserId = req.params.userId;
+    
+    // Проверяем, что userId не равен текущему пользователю
+    if (parseInt(otherUserId) === currentUserId) {
+      return res.status(400).json({ message: 'Нельзя отправить сообщение самому себе' });
+    }
+    
+    // Получаем сообщения между пользователями
     const messages = await Message.findAll({
       where: {
         [Op.or]: [
-          {
-            fromUserId: req.user.userId,
-            toUserId: req.params.userId
+          { 
+            [Op.and]: [
+              { fromUserId: currentUserId },
+              { toUserId: otherUserId }
+            ]
           },
-          {
-            fromUserId: req.params.userId,
-            toUserId: req.user.userId
+          { 
+            [Op.and]: [
+              { fromUserId: otherUserId },
+              { toUserId: currentUserId }
+            ]
           }
         ]
       },
@@ -58,219 +71,243 @@ router.get('/conversation/:userId', auth, async (req, res) => {
         {
           model: User,
           as: 'fromUser',
-          attributes: ['id', 'name', 'role', 'avatarUrl']
+          attributes: ['id', 'name', 'avatarUrl', 'role']
         },
         {
           model: User,
           as: 'toUser',
-          attributes: ['id', 'name', 'role', 'avatarUrl']
+          attributes: ['id', 'name', 'avatarUrl', 'role']
         }
       ],
       order: [['createdAt', 'ASC']]
     });
-
-    res.json(messages);
+    
+    // Отмечаем все сообщения от другого пользователя как прочитанные
+    await Message.update(
+      { read: true },
+      {
+        where: {
+          fromUserId: otherUserId,
+          toUserId: currentUserId,
+          read: false
+        }
+      }
+    );
+    
+    // Форматируем ответ
+    const formattedMessages = messages.map(message => {
+      const msg = message.toJSON();
+      // Упрощаем формат для фронтенда
+      return {
+        id: msg.id,
+        text: msg.text,
+        createdAt: msg.createdAt,
+        fromUserId: msg.fromUserId,
+        toUserId: msg.toUserId,
+        read: msg.read,
+        fromUser: msg.fromUser,
+        toUser: msg.toUser,
+        fileUrl: msg.fileUrl,
+        fileName: msg.fileName
+      };
+    });
+    
+    res.json(formattedMessages);
   } catch (error) {
-    console.error('Ошибка при получении сообщений:', error);
-    res.status(500).json({ message: 'Ошибка сервера' });
+    res.status(500).json({ message: 'Ошибка при получении сообщений' });
   }
 });
 
 // Получить список диалогов
-router.get('/conversations', auth, async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
-    const messages = await Message.findAll({
+    const userId = req.user.userId;
+    
+    // Получаем последние сообщения для каждого контакта
+    const conversations = await Message.findAll({
+      attributes: [
+        [Sequelize.fn('MAX', Sequelize.col('Message.id')), 'maxId'],
+        [Sequelize.literal('CASE WHEN "fromUserId" = :userId THEN "toUserId" ELSE "fromUserId" END'), 'contactId']
+      ],
       where: {
         [Op.or]: [
-          { fromUserId: req.user.userId },
-          { toUserId: req.user.userId }
+          { fromUserId: userId },
+          { toUserId: userId }
         ]
       },
+      group: [Sequelize.literal('CASE WHEN "fromUserId" = :userId THEN "toUserId" ELSE "fromUserId" END')],
+      replacements: { userId },
+      raw: true
+    });
+    
+    // Получаем полные данные о сообщениях
+    const conversationPromises = conversations.map(async (conv) => {
+      const message = await Message.findByPk(conv.maxId, {
+        include: [
+          {
+            model: User,
+            as: 'fromUser',
+            attributes: ['id', 'name', 'avatarUrl', 'role']
+          },
+          {
+            model: User,
+            as: 'toUser',
+            attributes: ['id', 'name', 'avatarUrl', 'role']
+          }
+        ]
+      });
+      
+      // Определяем контакт (другого пользователя)
+      const contact = message.fromUserId === userId ? message.toUser : message.fromUser;
+      
+      // Считаем непрочитанные сообщения
+      const unreadCount = await Message.count({
+        where: {
+          fromUserId: contact.id,
+          toUserId: userId,
+          read: false
+        }
+      });
+      
+      return {
+        id: message.id,
+        contact,
+        lastMessage: {
+          id: message.id,
+          text: message.text,
+          createdAt: message.createdAt,
+          fromUserId: message.fromUserId,
+          read: message.read,
+          fileUrl: message.fileUrl
+        },
+        unreadCount
+      };
+    });
+    
+    const result = await Promise.all(conversationPromises);
+    
+    // Сортируем по времени последнего сообщения (самые новые вверху)
+    result.sort((a, b) => new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt));
+    
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: 'Ошибка при получении списка диалогов' });
+  }
+});
+
+// Отправить сообщение
+router.post('/', auth, async (req, res) => {
+  try {
+    const fromUserId = req.user.userId;
+    const { toUserId, text, fileUrl, fileName } = req.body;
+    
+    // Проверяем, что toUserId не равен текущему пользователю
+    if (parseInt(toUserId) === fromUserId) {
+      return res.status(400).json({ message: 'Нельзя отправить сообщение самому себе' });
+    }
+    
+    // Проверяем существование получателя
+    const toUser = await User.findByPk(toUserId);
+    if (!toUser) {
+      return res.status(404).json({ message: 'Получатель не найден' });
+    }
+    
+    // Создаем сообщение
+    const message = await Message.create({
+      fromUserId,
+      toUserId,
+      text,
+      read: false,
+      fileUrl,
+      fileName
+    });
+    
+    // Получаем полное сообщение с данными пользователей
+    const fullMessage = await Message.findByPk(message.id, {
       include: [
         {
           model: User,
           as: 'fromUser',
-          attributes: ['id', 'name', 'role', 'avatarUrl']
+          attributes: ['id', 'name', 'avatarUrl', 'role']
         },
         {
           model: User,
           as: 'toUser',
-          attributes: ['id', 'name', 'role', 'avatarUrl']
-        }
-      ],
-      order: [['createdAt', 'DESC']]
-    });
-
-    // Группируем сообщения по собеседникам
-    const conversations = messages.reduce((acc, message) => {
-      const otherUser = message.fromUserId === req.user.userId ? message.toUser : message.fromUser;
-      if (!acc[otherUser.id]) {
-        acc[otherUser.id] = {
-          user: otherUser,
-          lastMessage: {
-            content: message.content,
-            createdAt: message.createdAt,
-            hasAttachment: message.hasAttachment,
-            attachmentType: message.attachmentType,
-            attachmentName: message.attachmentName
-          },
-          unreadCount: message.toUserId === req.user.userId && !message.isRead ? 1 : 0
-        };
-      } else if (!message.isRead && message.toUserId === req.user.userId) {
-        acc[otherUser.id].unreadCount++;
-      }
-      return acc;
-    }, {});
-
-    res.json(Object.values(conversations));
-  } catch (error) {
-    console.error('Error fetching conversations:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// Отправка сообщения
-router.post('/', auth, upload.single('file'), async (req, res) => {
-  try {
-    const { content, toUserId } = req.body;
-    
-    if (!toUserId) {
-      return res.status(400).json({ message: 'Не указан получатель' });
-    }
-
-    const recipient = await User.findByPk(toUserId);
-    if (!recipient) {
-      return res.status(404).json({ message: 'Получатель не найден' });
-    }
-
-    // Проверяем роли (студент может писать только учителю и наоборот)
-    const sender = await User.findByPk(req.user.userId);
-    if (!sender) {
-      return res.status(404).json({ message: 'Отправитель не найден' });
-    }
-
-    if ((sender.role === 'student' && recipient.role === 'student') ||
-        (sender.role === 'teacher' && recipient.role === 'teacher')) {
-      return res.status(403).json({ message: 'Недопустимый получатель' });
-    }
-
-    const messageData = {
-      content,
-      fromUserId: req.user.userId,
-      toUserId: parseInt(toUserId),
-      hasAttachment: !!req.file,
-      attachmentType: req.file?.mimetype,
-      attachmentUrl: req.file ? `/uploads/${req.file.filename}` : null,
-      attachmentName: req.file?.originalname
-    };
-
-    const message = await Message.create(messageData);
-    
-    // Получаем сообщение с информацией об отправителе
-    const messageWithSender = await Message.findByPk(message.id, {
-      include: [
-        {
-          model: User,
-          as: 'fromUser',
-          attributes: ['id', 'name', 'role', 'avatarUrl']
+          attributes: ['id', 'name', 'avatarUrl', 'role']
         }
       ]
     });
-
-    // Отправляем уведомление получателю через Socket.IO
-    if (global.sendSocketMessage) {
-      global.sendSocketMessage(parseInt(toUserId), {
-        type: 'NEW_MESSAGE',
-        message: messageWithSender
-      });
-    }
-
-    res.status(201).json(messageWithSender);
+    
+    // Отправляем сообщение через Socket.IO если получатель онлайн
+    const wasDelivered = global.sendSocketMessage(toUserId, {
+      type: 'new_message',
+      message: fullMessage
+    });
+    
+    res.status(201).json({
+      ...fullMessage.toJSON(),
+      delivered: wasDelivered
+    });
   } catch (error) {
-    console.error('Error creating message:', error);
-    res.status(500).json({ message: 'Ошибка при создании сообщения' });
+    res.status(500).json({ message: 'Ошибка при отправке сообщения' });
   }
 });
 
 // Отметить сообщения как прочитанные
 router.put('/read/:fromUserId', auth, async (req, res) => {
   try {
-    await Message.update(
-      { isRead: true },
+    const toUserId = req.user.userId;
+    const fromUserId = req.params.fromUserId;
+    
+    // Обновляем статус сообщений
+    const result = await Message.update(
+      { read: true },
       {
         where: {
-          fromUserId: req.params.fromUserId,
-          toUserId: req.user.userId,
-          isRead: false
+          fromUserId,
+          toUserId,
+          read: false
         }
       }
     );
     
-    // Уведомляем отправителя о прочтении сообщений через Socket.IO
-    if (global.sendSocketMessage) {
-      global.sendSocketMessage(parseInt(req.params.fromUserId), {
-        type: 'MESSAGES_READ',
-        fromUserId: req.user.userId
-      });
-    }
-    
-    res.status(200).json({ message: 'Сообщения отмечены как прочитанные' });
+    res.json({ 
+      success: true, 
+      count: result[0] 
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Ошибка при обновлении статуса сообщений' });
   }
 });
 
-// Удаление сообщения
-router.delete('/:messageId', auth, async (req, res) => {
+// Удалить сообщение
+router.delete('/:id', auth, async (req, res) => {
   try {
-    const message = await Message.findByPk(req.params.messageId, {
-      include: [
-        {
-          model: User,
-          as: 'fromUser',
-          attributes: ['id', 'name', 'role', 'avatarUrl']
-        },
-        {
-          model: User,
-          as: 'toUser',
-          attributes: ['id', 'name', 'role', 'avatarUrl']
-        }
-      ]
-    });
-
+    const messageId = req.params.id;
+    const userId = req.user.userId;
+    
+    // Проверяем существование сообщения
+    const message = await Message.findByPk(messageId);
     if (!message) {
       return res.status(404).json({ message: 'Сообщение не найдено' });
     }
-
+    
     // Проверяем, что пользователь является отправителем сообщения
-    if (message.fromUserId !== req.user.userId) {
-      return res.status(403).json({ message: 'Нет прав на удаление этого сообщения' });
+    if (message.fromUserId !== userId) {
+      return res.status(403).json({ message: 'Недостаточно прав для удаления этого сообщения' });
     }
-
-    // Сохраняем ID получателя перед удалением
-    const recipientId = message.toUserId;
-
-    // Удаляем файл вложения, если он есть
-    if (message.hasAttachment && message.attachmentUrl) {
-      const filePath = path.join(__dirname, '..', message.attachmentUrl);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
-
+    
+    // Удаляем сообщение
     await message.destroy();
-
-    // Отправляем уведомление получателю через Socket.IO
-    if (global.sendSocketMessage) {
-      global.sendSocketMessage(recipientId, {
-        type: 'MESSAGE_DELETED',
-        messageId: parseInt(req.params.messageId)
-      });
-    }
-
-    res.status(200).json({ message: 'Сообщение удалено' });
+    
+    // Уведомляем получателя об удалении сообщения через Socket.IO
+    global.sendSocketMessage(message.toUserId, {
+      type: 'message_deleted',
+      messageId
+    });
+    
+    res.json({ success: true });
   } catch (error) {
-    console.error('Error deleting message:', error);
     res.status(500).json({ message: 'Ошибка при удалении сообщения' });
   }
 });

@@ -1,74 +1,76 @@
-import React, { useEffect, useState } from 'react';
-import { 
-  Container, 
-  Paper, 
-  Typography, 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableContainer, 
-  TableHead, 
-  TableRow, 
-  Box, 
-  Alert, 
-  CircularProgress, 
-  Chip,
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Paper,
+  Typography,
+  CircularProgress,
+  Alert,
+  Tab,
+  Tabs,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
   Grid,
-  Tab,
-  Tabs,
-  ToggleButton,
   ToggleButtonGroup,
-  SelectChangeEvent,
+  ToggleButton,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
   Button,
-  useMediaQuery,
-  useTheme,
-  Divider,
-  Card,
-  CardContent,
-  AlertTitle,
+  Chip,
+  Stack,
   List,
   ListItem,
-  ListItemText
+  ListItemIcon,
+  ListItemText,
+  Divider,
+  useTheme,
+  useMediaQuery,
+  SelectChangeEvent
 } from '@mui/material';
-import { useSelector } from 'react-redux';
-import { RootState } from '../../store';
-import { getSchedule, getScheduleByDate, getClasses, getHomework, getGradesByLesson, Grade } from '../../services/api';
-import type { Schedule, Class, Homework } from '../../services/api';
-import { Person as PersonIcon, CalendarMonth, ViewList, MenuBook as MenuBookIcon, Grade as GradeIcon } from '@mui/icons-material';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { ru as ruLocale } from 'date-fns/locale';
-import { format } from 'date-fns';
-
-const daysOfWeek = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+import {
+  Schedule as ScheduleIcon,
+  Book as BookIcon,
+  Grading as GradingIcon,
+  AccessTime as AccessTimeIcon,
+  Room as RoomIcon,
+  ViewList,
+  CalendarMonth,
+  Person as PersonIcon
+} from '@mui/icons-material';
+import { getSchedule, getScheduleByDate, getClasses, Class, Schedule } from '../../services/api';
+import { getHomework, Homework } from '../../services/api';
+import { getGradesBySubjectAndDate, Grade } from '../../services/api';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store';
 
 enum ViewMode {
-  ByDate = 'by-date',
-  ByWeek = 'by-week'
+  ByWeek = 'week',
+  ByDate = 'date'
+}
+
+interface LessonDetail {
+  lesson: Schedule;
+  homework: Homework[];
+  grades: Grade[];
 }
 
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
   value: number;
-}
-
-// Интерфейс для детализации урока
-interface LessonDetailDialogProps {
-  open: boolean;
-  onClose: () => void;
-  lesson: Schedule | null;
-  classId: string;
-  date: Date | null;
 }
 
 const TabPanel = (props: TabPanelProps) => {
@@ -78,12 +80,12 @@ const TabPanel = (props: TabPanelProps) => {
     <div
       role="tabpanel"
       hidden={value !== index}
-      id={`tabpanel-${index}`}
-      aria-labelledby={`tab-${index}`}
+      id={`schedule-tabpanel-${index}`}
+      aria-labelledby={`schedule-tab-${index}`}
       {...other}
     >
       {value === index && (
-        <Box sx={{ py: 2 }}>
+        <Box sx={{ pt: 2 }}>
           {children}
         </Box>
       )}
@@ -91,261 +93,127 @@ const TabPanel = (props: TabPanelProps) => {
   );
 };
 
-// Компонент диалога с деталями урока
-const LessonDetailDialog: React.FC<LessonDetailDialogProps> = ({ open, onClose, lesson, classId, date }) => {
-  const [homework, setHomework] = useState<Homework[]>([]);
-  const [grades, setGrades] = useState<Grade[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<boolean>(false);
-  
-  useEffect(() => {
-    if (open && lesson && classId) {
-      loadData();
-    }
-  }, [open, lesson, classId, date]);
-  
-  const loadData = async () => {
-    if (!lesson || !classId || !date) return;
-    
-    setLoading(true);
-    setAuthError(false);
-    
-    console.log('Загрузка данных для урока:', {
-      subject: lesson.subject,
-      lessonNumber: lesson.lessonNumber,
-      classId,
-      date: format(date, 'yyyy-MM-dd')
-    });
-    
-    try {
-      // Загрузка домашних заданий
-      try {
-        const homeworkData = await getHomework(classId);
-        console.log(`Получено ${homeworkData.length} домашних заданий`);
-        
-        const formattedDateStr = format(date, 'yyyy-MM-dd');
-        
-        // Фильтруем домашние задания по предмету
-        const subjectHomework = homeworkData.filter(hw => hw.subject === lesson.subject);
-        console.log(`Домашних заданий по предмету "${lesson.subject}": ${subjectHomework.length}`);
-        
-        // Дополнительно фильтруем по дате
-        const lessonHomework = subjectHomework.filter(hw => {
-          // Сначала проверяем, является ли dueDate допустимой датой
-          if (!hw.dueDate) return false;
-          
-          const hwDate = new Date(hw.dueDate);
-          if (isNaN(hwDate.getTime())) {
-            console.warn('Недопустимая дата в домашнем задании:', hw.dueDate);
-            return false;
-          }
-          
-          const hwDateStr = format(hwDate, 'yyyy-MM-dd');
-          const match = hwDateStr === formattedDateStr;
-          
-          if (match) {
-            console.log('Найдено подходящее домашнее задание:', {
-              id: hw.id,
-              subject: hw.subject,
-              hwDate: hwDateStr,
-              lessonDate: formattedDateStr,
-              match
-            });
-          }
-          
-          return match;
-        });
-        
-        console.log(`После фильтрации найдено ${lessonHomework.length} домашних заданий`);
-        setHomework(lessonHomework);
-      } catch (err) {
-        console.error('Ошибка при загрузке домашних заданий:', err);
-        // Продолжаем выполнение, даже если не удалось загрузить домашние задания
-      }
-      
-      // Загрузка оценок
-      try {
-        console.log('Запрос оценок с параметрами:', {
-          subject: lesson.subject,
-          date: date,
-          classId: classId
-        });
-        
-        // Убедимся, что date является экземпляром Date
-        if (!(date instanceof Date) || isNaN(date.getTime())) {
-          console.error('Недопустимая дата для запроса оценок:', date);
-          throw new Error('Недопустимая дата');
-        }
-        
-        const gradesData = await getGradesByLesson(lesson.subject, date, classId);
-        console.log(`Получено ${gradesData.length} оценок:`, gradesData);
-        setGrades(gradesData);
-      } catch (err) {
-        // Проверяем, является ли ошибка ошибкой доступа
-        if (err instanceof Error && err.message.startsWith('403:')) {
-          console.error('Ошибка доступа к оценкам:', err);
-          setAuthError(true);
-        } else {
-          console.error('Ошибка при загрузке оценок:', err);
-          // Не выбрасываем ошибку, чтобы не прерывать выполнение
-        }
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  // Получение цвета для оценки
-  const getGradeColor = (value: string | number) => {
-    // Преобразуем числовые значения в строки для сравнения
-    const strValue = String(value);
-    
-    if (strValue === '5') return 'success.main';
-    if (strValue === '4') return 'info.main';
-    if (strValue === '3') return 'warning.main';
-    if (strValue === '2' || strValue === '1') return 'error.main';
-    return 'text.primary';
-  };
-  
-  const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
-  
-  if (!lesson) return null;
-  
+const LessonDetailDialog = ({ 
+  open, 
+  onClose, 
+  lessonDetail 
+}: { 
+  open: boolean; 
+  onClose: () => void; 
+  lessonDetail: LessonDetail | null;
+}) => {
+  if (!lessonDetail) return null;
+  const { lesson, homework, grades } = lessonDetail;
+
   return (
-    <Dialog
-      open={open}
+    <Dialog 
+      open={open} 
       onClose={onClose}
-      fullScreen={fullScreen}
       maxWidth="md"
       fullWidth
     >
-      <DialogTitle sx={{ 
-        bgcolor: 'primary.main', 
-        color: 'primary.contrastText',
-        display: 'flex',
-        alignItems: 'center'
-      }}>
-        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          {lesson.subject} (Урок {lesson.lessonNumber})
-        </Typography>
-      </DialogTitle>
-      <DialogContent dividers>
-        {loading ? (
-          <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-            <CircularProgress />
+      <DialogTitle>{lesson.subject}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="h6" gutterBottom>Информация об уроке</Typography>
+            <List>
+              <ListItem>
+                <ListItemIcon><AccessTimeIcon /></ListItemIcon>
+                <ListItemText 
+                  primary="Время" 
+                  secondary={`${lesson.startTime} - ${lesson.endTime}`} 
+                />
+              </ListItem>
+              {lesson.teacher && (
+                <ListItem>
+                  <ListItemIcon><PersonIcon /></ListItemIcon>
+                  <ListItemText 
+                    primary="Учитель" 
+                    secondary={lesson.teacher.name} 
+                  />
+                </ListItem>
+              )}
+              {lesson.classroom && (
+                <ListItem>
+                  <ListItemIcon><RoomIcon /></ListItemIcon>
+                  <ListItemText 
+                    primary="Кабинет" 
+                    secondary={lesson.classroom} 
+                  />
+                </ListItem>
+              )}
+            </List>
           </Box>
-        ) : (
-          <div>
-            {authError && (
-              <Alert severity="warning" sx={{ mb: 2 }}>
-                <AlertTitle>Требуется повторная авторизация</AlertTitle>
-                <Typography variant="body2">
-                  Для просмотра оценок необходимо выйти из системы и войти снова, чтобы обновить данные авторизации.
-                </Typography>
-                <Button 
-                  color="inherit" 
-                  size="small" 
-                  sx={{ mt: 1 }} 
-                  onClick={() => {
-                    localStorage.removeItem('token');
-                    window.location.href = '/login';
-                  }}
-                >
-                  Выйти из системы
-                </Button>
-              </Alert>
-            )}
 
-            <Typography variant="h6" gutterBottom>
-              {lesson.subject}
-            </Typography>
-            <Typography variant="subtitle1" gutterBottom>
-              {date ? format(date, 'dd.MM.yyyy') : ''} | {lesson.startTime} - {lesson.endTime}
-            </Typography>
-            <Typography variant="subtitle2" gutterBottom>
-              Учитель: {lesson.teacher?.name || 'Не указан'}
-            </Typography>
+          <Divider />
 
-            <Typography variant="h6" sx={{ mt: 2 }}>
-              Домашние задания
-            </Typography>
+          <Box>
+            <Typography variant="h6" gutterBottom>Домашнее задание</Typography>
             {homework.length > 0 ? (
               <List>
                 {homework.map((hw) => (
                   <ListItem key={hw.id}>
+                    <ListItemIcon><BookIcon /></ListItemIcon>
                     <ListItemText 
-                      primary={
-                        <Typography variant="body1" fontWeight="medium">
-                          {hw.description}
-                        </Typography>
-                      } 
-                      secondary={
-                        <>
-                          <Typography variant="body2" color="text.secondary">
-                            Срок сдачи: {format(new Date(hw.dueDate), 'dd.MM.yyyy')}
-                          </Typography>
-                          {hw.teacher && (
-                            <Typography variant="body2" color="text.secondary">
-                              Учитель: {hw.teacher.name}
-                            </Typography>
-                          )}
-                        </>
-                      } 
+                      primary={`Задание на ${new Date(hw.dueDate).toLocaleDateString()}`}
+                      secondary={hw.description} 
                     />
                   </ListItem>
                 ))}
               </List>
             ) : (
-              <Alert severity="info" sx={{ mt: 1 }}>
-                <AlertTitle>Домашних заданий нет</AlertTitle>
-                <Typography variant="body2">
-                  По этому уроку не назначено домашних заданий на указанную дату.
-                </Typography>
-              </Alert>
+              <Typography color="text.secondary">
+                Нет домашнего задания
+              </Typography>
             )}
+          </Box>
 
-            <Typography variant="h6" sx={{ mt: 2 }}>
-              Оценки
-            </Typography>
+          <Divider />
+
+          <Box>
+            <Typography variant="h6" gutterBottom>Оценки</Typography>
             {grades.length > 0 ? (
-              <List>
-                {grades.map((grade) => (
-                  <ListItem key={grade.id}>
-                    <ListItemText 
-                      primary={
-                        <Typography sx={{ color: getGradeColor(grade.value), fontWeight: 'bold' }}>
-                          Оценка: {grade.value}
-                        </Typography>
-                      } 
-                      secondary={grade.comment ? `Комментарий: ${grade.comment}` : 'Без комментария'} 
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            ) : authError ? (
-              <Alert severity="warning" sx={{ mt: 1 }}>
-                <AlertTitle>Ошибка доступа к оценкам</AlertTitle>
-                <Typography variant="body2">
-                  У вас нет прав для просмотра оценок по этому уроку. Возможно, требуется повторная авторизация.
-                </Typography>
-              </Alert>
+              <TableContainer component={Paper} variant="outlined">
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Оценка</TableCell>
+                      <TableCell>Комментарий</TableCell>
+                      <TableCell>Дата</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {grades.map((grade) => (
+                      <TableRow key={grade.id}>
+                        <TableCell>
+                          <Chip 
+                            label={grade.value} 
+                            color="primary"
+                            sx={{ 
+                              backgroundColor: getGradeColor(grade.value),
+                              color: 'white',
+                              fontWeight: 'bold'
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>{grade.comment || '-'}</TableCell>
+                        <TableCell>{new Date(grade.date).toLocaleDateString()}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
             ) : (
-              <Alert severity="info" sx={{ mt: 1 }}>
-                <AlertTitle>Оценок пока нет</AlertTitle>
-                <Typography variant="body2">
-                  За этот урок нет проставленных оценок. Возможно, учитель еще не успел их выставить.
-                </Typography>
-              </Alert>
+              <Typography color="text.secondary">
+                Нет оценок
+              </Typography>
             )}
-          </div>
-        )}
+          </Box>
+        </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} color="primary">
-          Закрыть
-        </Button>
+        <Button onClick={onClose}>Закрыть</Button>
       </DialogActions>
     </Dialog>
   );
@@ -366,31 +234,26 @@ const StudentSchedule: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  // Функция для сокращения имени учителя на мобильных устройствах
   const formatTeacherName = (name: string) => {
     if (!isMobile) return name;
     
     const parts = name.split(' ');
     if (parts.length === 1) return parts[0];
     
-    // Фамилия полностью, от имени и отчества - только первые буквы
     const lastName = parts[0];
     const initials = parts.slice(1).map(part => part[0] ? part[0] + '.' : '').join('');
     
     return `${lastName} ${initials}`;
   };
 
-  // Загрузка классов
   useEffect(() => {
     const loadClasses = async () => {
       try {
         const data = await getClasses();
         setClasses(data);
         
-        // Устанавливаем класс пользователя, если он есть
         if (user?.classId && !selectedClassId) {
           setSelectedClassId(user.classId);
-          console.log('Установлен класс пользователя:', user.classId);
         }
       } catch (error) {
         console.error('Ошибка при загрузке классов:', error);
@@ -400,15 +263,10 @@ const StudentSchedule: React.FC = () => {
     loadClasses();
   }, [user?.classId]);
 
-  // Загрузка расписания
   useEffect(() => {
-    // Если класс не выбран, не загружаем расписание
     if (!selectedClassId || selectedClassId === '') {
-      console.log('ClassId не выбран, загрузка отменена');
       return;
     }
-    
-    console.log('Загрузка расписания для класса:', selectedClassId);
     
     const fetchSchedule = async () => {
       try {
@@ -417,17 +275,12 @@ const StudentSchedule: React.FC = () => {
         let data: Schedule[] = [];
         
         if (viewMode === ViewMode.ByDate && selectedDate) {
-          // Для режима просмотра по дате
           const formattedDate = selectedDate.toISOString().split('T')[0];
-          console.log('Загрузка расписания по дате:', formattedDate, 'для класса:', selectedClassId);
           data = await getScheduleByDate(formattedDate, selectedClassId);
         } else {
-          // Для режима просмотра по неделе
-          console.log('Загрузка недельного расписания для класса:', selectedClassId);
           data = await getSchedule(selectedClassId);
         }
         
-        console.log('Получено расписание:', data.length, 'записей');
         setSchedule(data);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Ошибка при загрузке расписания';
@@ -443,13 +296,11 @@ const StudentSchedule: React.FC = () => {
 
   const handleClassChange = (event: SelectChangeEvent) => {
     const newClassId = event.target.value;
-    console.log('Выбран новый класс:', newClassId);
     setSelectedClassId(newClassId);
   };
 
   const handleViewModeChange = (event: React.MouseEvent<HTMLElement>, newMode: ViewMode | null) => {
     if (newMode !== null) {
-      console.log('Изменен режим просмотра:', newMode);
       setViewMode(newMode);
     }
   };
@@ -459,31 +310,114 @@ const StudentSchedule: React.FC = () => {
   };
 
   const getScheduleForDay = (dayOfWeek: number) => {
-    return schedule
-      .filter(item => item.dayOfWeek === dayOfWeek)
-      .sort((a, b) => a.lessonNumber - b.lessonNumber);
+    return schedule.filter(lesson => lesson.dayOfWeek === dayOfWeek);
   };
 
-  const getSelectedClass = () => {
-    const selectedClass = classes.find(c => c.id === selectedClassId);
-    return selectedClass ? `${selectedClass.grade}-${selectedClass.letter}` : '';
-  };
-
-  const handleLessonClick = (lesson: Schedule) => {
+  const handleLessonClick = async (lesson: Schedule) => {
     setSelectedLesson(lesson);
-    setDetailDialogOpen(true);
+    
+    try {
+      let homeworkData: Homework[] = [];
+      try {
+        homeworkData = await getHomework();
+      } catch (error) {
+        homeworkData = [];
+      }
+      
+      let subjectHomework = homeworkData.filter(hw => hw.subject === lesson.subject);
+      
+      let lessonHomework: Homework[] = [];
+      
+      if (lesson.date) {
+        const lessonDate = new Date(lesson.date);
+        
+        lessonHomework = subjectHomework.filter(hw => {
+          if (!hw.dueDate) return false;
+          
+          const dueDate = new Date(hw.dueDate);
+          if (isNaN(dueDate.getTime())) return false;
+          
+          const homeworkDay = dueDate.getDate();
+          const homeworkMonth = dueDate.getMonth();
+          
+          const lessonDay = lessonDate.getDate();
+          const lessonMonth = lessonDate.getMonth();
+          
+          return homeworkDay === lessonDay && homeworkMonth === lessonMonth;
+        });
+      } else {
+        lessonHomework = subjectHomework;
+      }
+      
+      let gradesData: Grade[] = [];
+      try {
+        let date = null;
+        
+        if (lesson.date && typeof lesson.date === 'string') {
+          date = new Date(lesson.date);
+        }
+        
+        gradesData = await getGradesBySubjectAndDate(lesson.subject, date);
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('доступ')) {
+          gradesData = [];
+        } else {
+          console.error('Ошибка при загрузке оценок:', error);
+        }
+      }
+      
+      const lessonDetail: LessonDetail = {
+        lesson,
+        homework: lessonHomework,
+        grades: gradesData
+      };
+      
+      setSelectedLesson(lesson);
+      setLessonDetail(lessonDetail);
+      setDetailDialogOpen(true);
+      
+    } catch (error) {
+      console.error('Ошибка при загрузке данных урока:', error);
+    }
   };
+  
+  const [lessonDetail, setLessonDetail] = useState<LessonDetail | null>(null);
+  
+  const getGradeColor = (value: string | number) => {
+    const strValue = String(value);
+    
+    switch (strValue) {
+      case '5': return '#1B5E20';
+      case '4': return '#4CAF50';
+      case '3': return '#FFC107';
+      case '2': return '#F44336';
+      case '1': return '#B71C1C';
+      case 'Н': return '#9C27B0';
+      case 'У': return '#2196F3';
+      case 'О': return '#FF9800';
+      default: return '#9E9E9E';
+    }
+  };
+
+  const daysOfWeek = [
+    'Понедельник',
+    'Вторник',
+    'Среда',
+    'Четверг',
+    'Пятница',
+    'Суббота'
+  ];
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+      <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
         <CircularProgress />
       </Box>
     );
   }
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Box sx={{ p: 3 }}>
       <Typography variant="h4" gutterBottom>
         Расписание
       </Typography>
@@ -546,27 +480,28 @@ const StudentSchedule: React.FC = () => {
         </Grid>
       </Paper>
 
-      {!selectedClassId ? (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Выберите класс для отображения расписания
-        </Alert>
-      ) : viewMode === ViewMode.ByWeek ? (
-        <Paper>
+      {viewMode === ViewMode.ByWeek ? (
+        <Box sx={{ width: '100%' }}>
           <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-            <Tabs value={tabValue} onChange={handleTabChange} variant="scrollable" scrollButtons="auto">
+            <Tabs
+              value={tabValue}
+              onChange={handleTabChange}
+              variant="scrollable"
+              scrollButtons={isMobile ? "auto" : "disabled"}
+            >
               {daysOfWeek.map((day, index) => (
-                <Tab label={day} key={index} />
+                <Tab key={index} label={day} icon={<ScheduleIcon />} iconPosition="start" />
               ))}
             </Tabs>
           </Box>
-
+          
           {daysOfWeek.map((day, index) => (
             <TabPanel value={tabValue} index={index} key={index}>
-              <Typography variant="h6" gutterBottom>
-                {day} - {getSelectedClass()}
+              <Typography variant="h5" gutterBottom>
+                {day}
               </Typography>
-              
-              {getScheduleForDay(index + 1).length === 0 ? (
+              {
+              getScheduleForDay(index + 1).length === 0 ? (
                 <Alert severity="info">
                   На этот день нет уроков
                 </Alert>
@@ -612,19 +547,24 @@ const StudentSchedule: React.FC = () => {
               )}
             </TabPanel>
           ))}
-        </Paper>
+        </Box>
       ) : (
-        <Paper sx={{ p: 2 }}>
-          <Typography variant="h6" gutterBottom>
-            Расписание на {selectedDate?.toLocaleDateString('ru-RU')} - {getSelectedClass()}
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="h5" gutterBottom>
+            {selectedDate ? selectedDate.toLocaleDateString('ru-RU', { 
+              weekday: 'long', 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric' 
+            }) : 'Выберите дату'}
           </Typography>
           
           {schedule.length === 0 ? (
             <Alert severity="info">
-              На выбранную дату нет уроков
+              На эту дату нет уроков
             </Alert>
           ) : (
-            <TableContainer>
+            <TableContainer component={Paper}>
               <Table>
                 <TableHead>
                   <TableRow>
@@ -636,9 +576,9 @@ const StudentSchedule: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {schedule.sort((a, b) => a.lessonNumber - b.lessonNumber).map((lesson) => (
+                  {schedule.map((lesson) => (
                     <TableRow 
-                      key={`${lesson.id || `${lesson.dayOfWeek}-${lesson.lessonNumber}`}`}
+                      key={`${lesson.dayOfWeek}-${lesson.lessonNumber}`}
                       hover
                       onClick={() => handleLessonClick(lesson)}
                       sx={{ cursor: 'pointer' }}
@@ -663,17 +603,15 @@ const StudentSchedule: React.FC = () => {
               </Table>
             </TableContainer>
           )}
-        </Paper>
+        </Box>
       )}
-      
-      <LessonDetailDialog 
+
+      <LessonDetailDialog
         open={detailDialogOpen}
         onClose={() => setDetailDialogOpen(false)}
-        lesson={selectedLesson}
-        classId={selectedClassId}
-        date={selectedDate}
+        lessonDetail={lessonDetail}
       />
-    </Container>
+    </Box>
   );
 };
 

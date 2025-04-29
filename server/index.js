@@ -10,29 +10,27 @@ const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
 const { initDatabase, sequelize } = require('./models');
 const { execSync } = require('child_process');
-
-// Импортируем маршруты
-const gradesRouter = require('./routes/grades.js');
-const homeworkRouter = require('./routes/homework.js');
-const scheduleRouter = require('./routes/schedule.js');
-const messagesRouter = require('./routes/messages.js');
-const finalGradesRouter = require('./routes/finalGrades.js');
-const usersRouter = require('./routes/users.js');
-const authRouter = require('./routes/auth.js');
-const subjectsRouter = require('./routes/subjects.js');
-const classesRouter = require('./routes/classes.js');
-const trimestersRouter = require('./routes/trimesters.js');
+const usersRoutes = require('./routes/users');
+const gradesRoutes = require('./routes/grades');
+const classesRoutes = require('./routes/classes');
+const homeworkRoutes = require('./routes/homework');
+const subjectsRoutes = require('./routes/subjects');
+const settingsRoutes = require('./routes/settings');
+const scheduleRoutes = require('./routes/schedule');
+const finalGradesRoutes = require('./routes/finalGrades');
+const trimestersRoutes = require('./routes/trimesters');
+const socketIo = require('socket.io');
+const { socketAuth } = require('./middleware/auth');
+const Message = require('./models/Message');
+const User = require('./models/User');
 
 dotenv.config();
 
-// Инициализируем Express приложение
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Создаем HTTP-сервер на основе Express
 const server = http.createServer(app);
 
-// Настройка CORS
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
     ? ['https://eljur-client.netlify.app', 'https://eljur-app.netlify.app', 'https://eljur.netlify.app'] 
@@ -41,15 +39,12 @@ const corsOptions = {
   credentials: true
 };
 
-// Инициализируем Socket.IO
 const io = new Server(server, {
   cors: corsOptions
 });
 
-// Хранилище для активных соединений
 const activeConnections = new Map();
 
-// Middleware для аутентификации пользователя в Socket.IO
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth.token || 
@@ -68,23 +63,19 @@ io.use((socket, next) => {
   }
 });
 
-// Обработка подключений Socket.IO
 io.on('connection', (socket) => {
   activeConnections.set(socket.userId, socket);
   
-  // Отправляем информацию о подключении самому пользователю
   socket.emit('connect_status', { 
     connected: true, 
     userId: socket.userId,
     userRole: socket.userRole
   });
   
-  // Обработка отправки сообщения
   socket.on('send_message', (data) => {
     // Обработка сообщения происходит в роутере
   });
   
-  // Обработка изменения статуса "прочитано"
   socket.on('mark_messages_read', async (data) => {
     try {
       const { fromUserId } = data;
@@ -96,13 +87,11 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Обработка отключения
   socket.on('disconnect', () => {
     activeConnections.delete(socket.userId);
   });
 });
 
-// Глобальная функция для отправки сообщений через Socket.IO
 global.sendSocketMessage = (userId, data) => {
   try {
     const userSocket = activeConnections.get(parseInt(userId));
@@ -117,17 +106,14 @@ global.sendSocketMessage = (userId, data) => {
   }
 };
 
-// Определяем пути для загрузок
 const uploadsDir = path.join(__dirname, 'uploads');
 const avatarsDir = path.join(uploadsDir, 'avatars');
 
 let User, Class, Grade, Subject, Homework, Schedule, SchoolSettings, Message;
 
-// Middleware
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// Создаем директории для загрузок
 const createUploadDirs = async () => {
   try {
     // Проверяем существование директории uploads
@@ -155,7 +141,6 @@ const createUploadDirs = async () => {
   }
 };
 
-// Настраиваем обработку статических файлов
 app.use('/uploads', (req, res, next) => {
   // Проверяем, существует ли файл
   fs.access(path.join(uploadsDir, req.url))
@@ -171,47 +156,24 @@ app.use('/uploads', (req, res, next) => {
   }
 }));
 
-// Добавляем простое обслуживание статических файлов
 app.use('/uploads', express.static(uploadsDir));
 
-// Подключаем маршруты
-app.use('/api/auth', authRouter);
-app.use('/api/users', usersRouter);
-app.use('/api/grades', gradesRouter);
-app.use('/api/homework', homeworkRouter);
-app.use('/api/schedule', scheduleRouter);
-app.use('/api/messages', messagesRouter);
-app.use('/api/final-grades', finalGradesRouter);
-app.use('/api/subjects', subjectsRouter);
-app.use('/api/classes', classesRouter);
-app.use('/api/trimesters', trimestersRouter);
+app.use('/api/auth', require('./routes/auth.js'));
+app.use('/api/users', usersRoutes);
+app.use('/api/grades', gradesRoutes);
+app.use('/api/homework', homeworkRoutes);
+app.use('/api/schedule', scheduleRoutes);
+app.use('/api/messages', require('./routes/messages.js'));
+app.use('/api/finalGrades', finalGradesRoutes);
+app.use('/api/subjects', subjectsRoutes);
+app.use('/api/classes', classesRoutes);
+app.use('/api/trimesters', trimestersRoutes);
+app.use('/api/settings', settingsRoutes);
 
-// Перенаправляем запросы на /api/grades
-app.use('/api/grades', require('./routes/grades.js'));
-
-// Перенаправляем запросы на /api/final-grades
-app.use('/api/final-grades', require('./routes/finalGrades.js'));
-
-// Перенаправляем запросы на /api/trimesters
-app.use('/api/trimesters', require('./routes/trimesters.js'));
-
-// Маршрут для получения рейтинга класса
-app.get('/api/ratings/class/:classId', async (req, res) => {
-  try {
-    const gradesHandler = require('./routes/grades.js');
-    await gradesHandler.getClassRatings(req, res);
-  } catch (error) {
-    console.error('Ошибка при обработке запроса рейтинга:', error);
-    res.status(500).json({ message: 'Ошибка сервера' });
-  }
-});
-
-// Тестовый маршрут
 app.get('/', (req, res) => {
-  res.json({ message: 'API сервер работает' });
+  res.send('API is running');
 });
 
-// Middleware для проверки JWT
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -239,7 +201,6 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-// Создание администратора и директора при первом запуске
 const initializeDefaultUsers = async () => {
   try {
     const { User } = require('./models/index.js');
@@ -269,7 +230,6 @@ const initializeDefaultUsers = async () => {
   }
 };
 
-// Маршруты аутентификации
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -292,7 +252,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Маршруты для пользователей (только для админа)
 app.post('/api/users', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -311,7 +270,6 @@ app.post('/api/users', authenticateToken, async (req, res) => {
   }
 });
 
-// Получение списка пользователей (для админа и директора)
 app.get('/api/users', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'director') {
@@ -322,38 +280,28 @@ app.get('/api/users', authenticateToken, async (req, res) => {
       return res.status(500).json({ message: 'Модели не инициализированы' });
     }
 
-    const users = await User.findAll({
-      attributes: { exclude: ['password'] },
-      include: [{
-        model: Class,
-        as: 'class',
-        attributes: ['grade', 'letter'],
-        required: false
-      }],
-      order: [
-        ['role', 'ASC'],
-        ['name', 'ASC']
-      ]
+    const { users, studentsCount, teachersCount } = await User.findAndCountAll({
+      where: { role: { [require('sequelize').Op.in]: ['student', 'teacher'] } },
+      attributes: ['id', 'name', 'role', 'classId'],
+      include: [{ model: Class, as: 'class' }]
+    }).then(result => {
+      const students = result.rows.filter(user => user.role === 'student');
+      const teachers = result.rows.filter(user => user.role === 'teacher');
+      return {
+        users: result.rows,
+        studentsCount: students.length,
+        teachersCount: teachers.length
+      };
+    }).catch(error => {
+      return { users: [], studentsCount: 0, teachersCount: 0 };
     });
 
-    // Преобразуем данные для корректного отображения
-    const transformedUsers = users.map(user => {
-      const userData = user.toJSON();
-      if (userData.class) {
-        userData.className = `${userData.class.grade}-${userData.class.letter}`;
-      }
-      delete userData.class;
-      return userData;
-    });
-
-    res.json(transformedUsers);
+    res.json({ studentsCount, teachersCount, users });
   } catch (error) {
-    console.error('Ошибка при получении пользователей:', error);
-    res.status(500).json({ message: 'Ошибка сервера при получении пользователей' });
+    res.status(500).json({ message: 'Ошибка при получении пользователей' });
   }
 });
 
-// Получение списка учеников (для учителей)
 app.get('/api/users/students', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'teacher') {
@@ -370,7 +318,6 @@ app.get('/api/users/students', authenticateToken, async (req, res) => {
   }
 });
 
-// Получение списка учителей (для учеников)
 app.get('/api/users/teachers', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'student') {
@@ -388,7 +335,6 @@ app.get('/api/users/teachers', authenticateToken, async (req, res) => {
   }
 });
 
-// Маршрут для директора
 app.get('/api/director/dashboard', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'director') {
@@ -413,39 +359,37 @@ app.get('/api/director/dashboard', authenticateToken, async (req, res) => {
           ['letter', 'ASC']
         ]
       }).catch(err => {
-        console.error('Error fetching classes:', err);
         return [];
       }),
       SchoolSettings.findOne().catch(err => {
-        console.error('Error fetching settings:', err);
         return null;
       })
     ]);
 
-    // Если настройки не найдены, создаем их с значениями по умолчанию
-    const finalSettings = settings || await SchoolSettings.create({
-      lessonDuration: 40,
-      breakDuration: 10,
-      longBreakDuration: 20,
-      longBreakAfterLesson: 3,
-      firstLessonStart: '08:00',
-      secondShiftStart: '14:00'
-    }).catch(err => {
-      console.error('Error creating default settings:', err);
-      return null;
-    });
+    // Если настройки не найдены, создаем их с дефолтными значениями
+    if (!settings) {
+      await SchoolSettings.create({
+        firstLessonStart: '08:30',
+        lessonDuration: 45,
+        breakDuration: 10,
+        longBreakDuration: 20,
+        longBreakAfterLesson: 3,
+        secondShiftStart: '14:00',
+        gradeRoundingThreshold: 0.5
+      }).catch(err => {
+        // Обработка ошибки
+      });
+    }
 
     res.json({
       classes: classes || [],
-      settings: finalSettings
+      settings: settings
     });
   } catch (error) {
-    console.error('Error in director dashboard:', error);
-    res.status(500).json({ message: 'Ошибка сервера' });
+    res.status(500).json({ message: 'Ошибка при получении данных панели директора' });
   }
 });
 
-// Маршруты для оценок
 app.post('/api/grades', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'teacher') {
@@ -475,7 +419,6 @@ app.post('/api/grades', authenticateToken, async (req, res) => {
   }
 });
 
-// Получение оценок (для учителя и ученика)
 app.get('/api/grades', authenticateToken, async (req, res) => {
   try {
     let where = {};
@@ -502,7 +445,6 @@ app.get('/api/grades', authenticateToken, async (req, res) => {
   }
 });
 
-// Удаление пользователя (только для админа)
 app.delete('/api/users/:userId', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -527,7 +469,6 @@ app.delete('/api/users/:userId', authenticateToken, async (req, res) => {
   }
 });
 
-// Удаление оценки (только для учителя, который её выставил)
 app.delete('/api/grades/:gradeId', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'teacher') {
@@ -552,7 +493,6 @@ app.delete('/api/grades/:gradeId', authenticateToken, async (req, res) => {
   }
 });
 
-// Получение списка классов
 app.get('/api/classes', authenticateToken, async (req, res) => {
   try {
     const classes = await Class.findAll({
@@ -573,7 +513,6 @@ app.get('/api/classes', authenticateToken, async (req, res) => {
   }
 });
 
-// Создание нового класса
 app.post('/api/classes', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -591,7 +530,6 @@ app.post('/api/classes', authenticateToken, async (req, res) => {
   }
 });
 
-// Удаление класса
 app.delete('/api/classes/:classId', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -612,7 +550,6 @@ app.delete('/api/classes/:classId', authenticateToken, async (req, res) => {
   }
 });
 
-// Назначение ученика в класс
 app.put('/api/users/:userId/class', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -645,7 +582,6 @@ app.put('/api/users/:userId/class', authenticateToken, async (req, res) => {
   }
 });
 
-// Тестовый маршрут для создания и отдачи тестового файла
 app.get('/create-test-file', async (req, res) => {
   try {
     // Создаем простой текстовый файл в директории avatars
@@ -663,7 +599,6 @@ app.get('/create-test-file', async (req, res) => {
   }
 });
 
-// Диагностический маршрут для проверки доступа к файлам
 app.get('/check-file', async (req, res) => {
   try {
     const { filePath } = req.query;
@@ -704,7 +639,6 @@ app.get('/check-file', async (req, res) => {
   }
 });
 
-// Специальный маршрут для отдачи аватаров
 app.get('/uploads/avatars/:filename', async (req, res) => {
   try {
     const filename = req.params.filename;
@@ -758,7 +692,6 @@ app.get('/uploads/avatars/:filename', async (req, res) => {
   }
 });
 
-// Функция для инициализации триместров
 const initializeTrimesters = async () => {
   try {
     const { Trimester } = require('./models');
@@ -808,7 +741,6 @@ const initializeTrimesters = async () => {
   }
 };
 
-// Функция создания тестового аватара
 const createTestAvatar = async () => {
   try {
     const defaultAvatarPath = path.join(avatarsDir, 'default.png');
@@ -842,7 +774,6 @@ const createTestAvatar = async () => {
   }
 };
 
-// Функция для инициализации тестовых данных
 const initTestData = async () => {
   try {
     // Создаем директории для загрузок
@@ -858,24 +789,17 @@ const initTestData = async () => {
   }
 };
 
-// Функция запуска сервера
 const startServer = async () => {
   try {
     // Запускаем миграции перед запуском сервера
     try {
-      console.log('Применяем миграции...');
       execSync('npx sequelize-cli db:migrate', { stdio: 'inherit' });
-      console.log('Миграции успешно применены');
     } catch (migrationError) {
-      console.error('Предупреждение: Ошибка при применении миграций.');
-      console.error('Продолжаем запуск сервера без применения миграций.');
       // Продолжаем работу даже при ошибке миграций
     }
 
     // Инициализация базы данных (без принудительного пересоздания таблиц)
-    console.log('Инициализация базы данных...');
     await initDatabase();
-    console.log('База данных инициализирована');
     
     // Создание папки для аватаров, если её нет
     if (!fsSync.existsSync(avatarsDir)) {
@@ -889,10 +813,9 @@ const startServer = async () => {
     await initTestData();
     
     server.listen(PORT, () => {
-      console.log(`Сервер запущен на порту ${PORT}`);
+      // Сервер запущен
     });
   } catch (error) {
-    console.error('Критическая ошибка при запуске сервера:', error);
     process.exit(1); // Завершаем процесс с ошибкой
   }
 };

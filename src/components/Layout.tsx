@@ -37,19 +37,15 @@ const Layout = ({ children }: LayoutProps) => {
   const [loadingRating, setLoadingRating] = useState(false);
 
   useEffect(() => {
-    // Загружаем рейтинг только для студентов и только если есть classId
     if (isAuthenticated && user?.role === 'student' && user?.classId) {
       const fetchRating = async () => {
         try {
           setLoadingRating(true);
           const ratings = await getClassRatings(user.classId as string);
           
-          // Найдем рейтинг текущего пользователя
           if (ratings.length > 0) {
-            // Сортируем по среднему баллу от высшего к низшему
             const sortedRatings = [...ratings].sort((a, b) => b.averageGrade - a.averageGrade);
             
-            // Находим индекс текущего пользователя
             const userIndex = sortedRatings.findIndex(r => r.studentId.toString() === user.id);
             
             if (userIndex !== -1) {
@@ -110,7 +106,6 @@ const Layout = ({ children }: LayoutProps) => {
     }
   };
 
-  // Компонент отображения рейтинга для многократного использования
   const RatingDisplay = () => {
     if (user?.role !== 'student' || !studentRating) return null;
     

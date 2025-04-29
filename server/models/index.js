@@ -33,26 +33,12 @@ db.Sequelize = Sequelize;
 const initDatabase = async () => {
   try {
     await sequelize.authenticate();
-    console.log('Соединение с базой данных установлено.');
     
     // Используем alter: true для обновления существующих таблиц
-    console.log('Синхронизация моделей с базой данных...');
     await sequelize.sync({ alter: true });
-    console.log('Модели успешно синхронизированы с базой данных.');
     
     return db;
   } catch (error) {
-    console.error('Ошибка при инициализации базы данных:');
-    console.error(error.name + ': ' + error.message);
-    
-    if (error.parent) {
-      console.error('Детали ошибки:', error.parent.message);
-    }
-    
-    if (error.sql) {
-      console.error('SQL запрос, вызвавший ошибку:', error.sql);
-    }
-    
     throw error;
   }
 };
